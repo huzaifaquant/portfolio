@@ -1545,4 +1545,138 @@ class TestAdvancedScenarios:
         assert row3['Cost Basis'] == 0
 
 
-# Run tests with: pytest test_portfolio.py -v
+class TestPositionValidation:
+    """Test validation logic for position switching"""
+    
+    def test_error_explicit_short_while_long(self):
+        """Test error when explicitly trying to open short while having long position"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')  # Long 10
+        
+        # Try to explicitly open short position - should error
+        with pytest.raises(ValueError, match="Cannot.*open a short position.*while holding a long"):
+            add_trade('AAPL', 'Equity', 'sell', 'short', 12, 10, '1/2/2025')
+    
+    def test_error_explicit_long_while_short(self):
+        """Test error when explicitly trying to open long while having short position"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'sell', 'short', 10, 10, '1/1/2025')  # Short 10
+        
+        # Try to explicitly open long position - should error
+        with pytest.raises(ValueError, match="Cannot.*open a long position.*while holding a short"):
+            add_trade('AAPL', 'Equity', 'buy', 'long', 8, 10, '1/2/2025')
+    
+    def test_allowed_natural_flip_long_to_short(self):
+        """Test that natural flip from long to short is allowed (selling more than owned)"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')  # Long 10
+        
+        # Sell 15 with position='long' - naturally flips to short 5
+        row = add_trade('AAPL', 'Equity', 'sell', 'long', 12, 15, '1/2/2025')
+        assert row.iloc[-1]['Current Quantity'] == -5  # Should be short 5
+        assert row.iloc[-1]['Current Position'] == 'Short'
+    
+    def test_allowed_natural_flip_short_to_long(self):
+        """Test that natural flip from short to long is allowed (buying more than owed)"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'sell', 'short', 10, 10, '1/1/2025')  # Short 10
+        
+        # Buy 15 with position='short' - naturally flips to long 5
+        row = add_trade('AAPL', 'Equity', 'buy', 'short', 8, 15, '1/2/2025')
+        assert row.iloc[-1]['Current Quantity'] == 5  # Should be long 5
+        assert row.iloc[-1]['Current Position'] == 'Long'
+    
+    def test_allowed_closing_long_position(self):
+        """Test that closing a long position by selling is allowed"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')  # Long 10
+        
+        # Close long position by selling
+        row = add_trade('AAPL', 'Equity', 'sell', 'long', 12, 10, '1/2/2025')
+        assert row.iloc[-1]['Current Quantity'] == 0
+        assert row.iloc[-1]['Current Position'] == 'Long'  # Position type before close
+    
+    def test_allowed_covering_short_position(self):
+        """Test that covering a short position by buying is allowed"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'sell', 'short', 10, 10, '1/1/2025')  # Short 10
+        
+        # Cover short position by buying
+        row = add_trade('AAPL', 'Equity', 'buy', 'short', 8, 10, '1/2/2025')
+        assert row.iloc[-1]['Current Quantity'] == 0
+        assert row.iloc[-1]['Current Position'] == 'Short'  # Position type before close
+    
+    def test_allowed_partial_close_long(self):
+        """Test that partial closing of long position is allowed"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')  # Long 10
+        
+        # Partially close long position
+        row = add_trade('AAPL', 'Equity', 'sell', 'long', 12, 5, '1/2/2025')
+        assert row.iloc[-1]['Current Quantity'] == 5  # Remaining long 5
+    
+    def test_allowed_partial_cover_short(self):
+        """Test that partial covering of short position is allowed"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'sell', 'short', 10, 10, '1/1/2025')  # Short 10
+        
+        # Partially cover short position
+        row = add_trade('AAPL', 'Equity', 'buy', 'short', 8, 5, '1/2/2025')
+        assert row.iloc[-1]['Current Quantity'] == -5  # Remaining short 5
+    
+    def test_allowed_opening_position_when_none_exists(self):
+        """Test that opening a position when none exists is allowed"""
+        reset_portfolio()
+        
+        # Open long position - should work
+        row = add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')
+        assert row.iloc[-1]['Current Quantity'] == 10
+        
+        # Close it
+        add_trade('AAPL', 'Equity', 'sell', 'long', 12, 10, '1/2/2025')
+        
+        # Open short position - should work
+        row = add_trade('AAPL', 'Equity', 'sell', 'short', 10, 10, '1/3/2025')
+        assert row.iloc[-1]['Current Quantity'] == -10
+    
+    def test_allowed_continuing_same_position_type(self):
+        """Test that continuing the same position type is allowed"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')  # Long 10
+        
+        # Add more to long position - should work
+        row = add_trade('AAPL', 'Equity', 'buy', 'long', 12, 5, '1/2/2025')
+        assert row.iloc[-1]['Current Quantity'] == 15
+        
+        # Close long position first before opening short
+        add_trade('AAPL', 'Equity', 'sell', 'long', 12, 15, '1/3/2025')  # Close long
+        
+        # Now open short position - should work
+        add_trade('AAPL', 'Equity', 'sell', 'short', 10, 10, '1/4/2025')  # Short 10
+        
+        # Add more to short position - should work
+        row = add_trade('AAPL', 'Equity', 'sell', 'short', 12, 5, '1/5/2025')
+        assert row.iloc[-1]['Current Quantity'] == -15
+    
+    def test_error_multiple_attempts_same_ticker(self):
+        """Test that multiple attempts to open opposite position on same ticker all error"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')  # Long 10
+        
+        # First attempt - should error
+        with pytest.raises(ValueError):
+            add_trade('AAPL', 'Equity', 'sell', 'short', 12, 10, '1/2/2025')
+        
+        # Second attempt - should still error (position still exists)
+        with pytest.raises(ValueError):
+            add_trade('AAPL', 'Equity', 'sell', 'short', 12, 10, '1/3/2025')
+    
+    def test_different_tickers_allowed(self):
+        """Test that different tickers can have different position types"""
+        reset_portfolio()
+        add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')  # AAPL long
+        add_trade('MSFT', 'Equity', 'sell', 'short', 20, 5, '1/2/2025')  # MSFT short - should work
+        
+        df = get_portfolio_df()
+        assert df.iloc[0]['Current Quantity'] == 10  # AAPL long
+        assert df.iloc[1]['Current Quantity'] == -5  # MSFT short

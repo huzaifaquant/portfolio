@@ -2350,8 +2350,20 @@ def process_trade(ticker, asset_type, action, position, price, quantity_buy, dat
         update_average_holding_days(closed_positions)
     
     # Determine current position based on new quantity
-    # Formula: short if q < 0, long if q > 0, hold if q == 0
-    current_position = 'short' if new_q < 0 else 'long'
+    # When quantity is 0, retain the previous position type (Long or Short)
+    # Formula: short if q < 0, long if q > 0, retain previous if q == 0
+    if new_q < 0:
+        current_position = 'short'
+    elif new_q > 0:
+        current_position = 'long'
+    else:  # new_q == 0
+        # Retain previous position type when closing
+        if old_q > 0:
+            current_position = 'long'  # Was long, now closed
+        elif old_q < 0:
+            current_position = 'short'  # Was short, now closed
+        else:
+            current_position = 'hold'  # No previous position
     
     # Calculate realized PnL at point of time (independent calculation)
     realized_pnl_at_point = calculate_realized_pnl_at_point_of_time(
