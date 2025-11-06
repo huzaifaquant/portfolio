@@ -39,7 +39,7 @@ COLUMNS = [
     'Trades/Month', 'Absolute Quantity Counts', 'Most Traded Symbol', 'Least Traded',
     'Avg Losing PnL', 'Avg Winning PnL', 'Most Profitable', 'Least Profitable', 'Max Drawdown',
     'Total Gain', 'Average Gain', 'Biggest Investment', 'Average Position', 'Holdings','YTD PnL',
-    'Highest Traded Volume', 'Lowest Traded Volume',
+    'Highest Traded Volume', 'Lowest Traded Volume', 'Average Holding Days',
     'Distribution', 'Distribution in %',
     'Equity Distribution (Market Cap)', 'Equity Distribution (Industry)', 'Equity Distribution (Sector)' 
 ]
@@ -99,33 +99,38 @@ def get_portfolio_df():
 
 def normalize_quantity(q):
     """
-    Normalize quantity input to float.
+    Normalize quantity input to float (always returns absolute value).
+    
+    The sign of the quantity doesn't matter - the position (long/short) determines direction.
+    This function extracts the numeric value and returns its absolute value.
     
     Accepts:
-        - numeric: 10, -5
-        - strings: "-(-10)" -> 10,  "(10)" -> 10, "-10" -> -10, "  -(-5)  " -> 5
+        - numeric: 10, -5 -> returns 10.0, 5.0
+        - strings: "-(-10)" -> 10.0,  "(10)" -> 10.0, "-10" -> 10.0, "  -(-5)  " -> 5.0
     
     Args:
         q: Quantity input (int, float, or string)
     
     Returns:
-        float: Normalized quantity value
+        float: Normalized quantity value (always positive/absolute)
     
     Edge cases:
-        - Handles negative parentheses notation: "-(-10)" -> -10
-        - Handles positive parentheses notation: "(10)" -> 10
+        - Handles negative parentheses notation: "-(-10)" -> 10.0
+        - Handles positive parentheses notation: "(10)" -> 10.0
+        - Handles negative values: "-10" -> 10.0
         - Strips whitespace
+        - Always returns absolute value regardless of input sign
     """
     if isinstance(q, (int, float)):
-        return float(q)
+        return abs(float(q))
     s = str(q).strip().replace(' ', '')
     if s.startswith('-(') and s.endswith(')'):
         inner = s[2:-1]
-        return -float(inner)
+        return abs(float(inner))
     if s.startswith('(') and s.endswith(')'):
         inner = s[1:-1]
-        return float(inner)
-    return float(s)
+        return abs(float(inner))
+    return abs(float(s))
 
 def get_or_create_trade_number(ticker, old_q, new_q, action):
     """
@@ -1798,7 +1803,7 @@ def update_average_holding_days(closed_positions):
             # Increment count of closed positions
             portfolio_state['closed_positions_count'] += 1
 
-def calculate_average_holding_days():
+def calculate_average_holding_days(is_closing_trade=False, previous_df=None):
     """
     Calculate Average Holding Days for all closed positions.
     
@@ -1806,13 +1811,23 @@ def calculate_average_holding_days():
     
     Formula: avg = cumulative_holding_sum / closed_positions_count
     
+    Args:
+        is_closing_trade (bool): Whether this trade row is closing a position (contains "- Close" in trade string)
+        previous_df (pd.DataFrame): Previous rows of portfolio DataFrame (not used, kept for compatibility)
+    
     Returns:
-        float or None: Average holding days (rounded to 3 decimals), or None if no positions closed
+        float or None: Average holding days (rounded to 3 decimals), or None if no positions closed or trade not closing
     
     Edge cases:
         - Returns None if no positions closed yet (closed_positions_count == 0)
+        - Returns None if is_closing_trade is False (only show value when trade closes)
         - Rounds to 3 decimal places for display
     """
+    # Only calculate and return average when a trade is actually closing
+    if not is_closing_trade:
+        return None  # Don't show value for non-closing trades
+    
+    # Trade is closing, calculate average
     if portfolio_state['closed_positions_count'] == 0:
         return None  # No positions closed yet
     
@@ -2245,6 +2260,38 @@ def process_trade(ticker, asset_type, action, position, price, quantity_buy, dat
     # Update quantity and determine current position
     new_q = calculate_current_quantity_single(ticker, action, q_in, old_q)
     
+    # Track position opening and closing for average holding days
+    # Get current period (row number) - 1-indexed
+    previous_df = portfolio_state['portfolio_df']
+    current_period = len(previous_df) + 1  # Current row number
+    
+    # Track position opening if this is a new position (old_q == 0 and new_q != 0)
+    if old_q == 0 and new_q != 0:
+        track_position_opening(ticker, current_period)
+    
+    # Detect closed positions (quantity went from non-zero to zero)
+    # Build old_quantities_dict: copy all current quantities, but use old_q for current ticker
+    old_quantities_dict = {}
+    for t in portfolio_state['quantities'].keys():
+        if t == ticker:
+            old_quantities_dict[t] = old_q  # Use old quantity for current ticker
+        else:
+            old_quantities_dict[t] = portfolio_state['quantities'][t]
+    
+    # Build new_quantities_dict: current state (already has new_q for ticker)
+    new_quantities_dict = dict(portfolio_state['quantities'])
+    
+    # Detect closed positions
+    closed_positions = detect_closed_positions(
+        old_quantities_dict,
+        new_quantities_dict,
+        current_period
+    )
+    
+    # Update average holding days when positions close
+    if closed_positions:
+        update_average_holding_days(closed_positions)
+    
     # Determine current position based on new quantity
     # Formula: short if q < 0, long if q > 0, hold if q == 0
     current_position = 'short' if new_q < 0 else 'long'
@@ -2264,8 +2311,9 @@ def process_trade(ticker, asset_type, action, position, price, quantity_buy, dat
         ticker, action, price, q_in, old_q, new_q, old_cb  
     )
     # Calculate buyable/sellable shares
-    # Formula: buyable_sellable = remaining_cash / price
-    buyable_sellable = (new_remaining / price) if price > 0 else 0.0
+    # Formula: buyable_sellable = prev_remaining_cash / price
+    previous_remaining = portfolio_state['remaining']
+    buyable_sellable = (previous_remaining / price) if price > 0 else 0.0
     
     # Calculate position value and unrealized PnL components
     pv = position_value_from_position(current_position, new_q, price)
@@ -2292,7 +2340,6 @@ def process_trade(ticker, asset_type, action, position, price, quantity_buy, dat
     
     # Calculate Daily PnL = Today's Total PnL Overall - Yesterday's Total PnL Overall
     # Get previous row's Total PnL Overall if it exists, otherwise 0 (first trade)
-    previous_df = portfolio_state['portfolio_df']
     if len(previous_df) > 0:
         previous_total_pnl_overall = previous_df.iloc[-1]['Total PnL Overall (Unrealized+Realized)']
         # Get yesterday's equity for Daily % calculation
@@ -2327,6 +2374,11 @@ def process_trade(ticker, asset_type, action, position, price, quantity_buy, dat
     
     # Format trade string
     trade_string = format_trade_string(action, current_position, trade_number, new_q)
+
+    # Calculate Average Holding Days - only calculate when trade closes
+    # Check if trade_string contains "- Close" to determine if this is a closing trade
+    is_closing_trade = "- Close" in trade_string
+    average_holding_days = calculate_average_holding_days(is_closing_trade=is_closing_trade, previous_df=previous_df)
     
     # Calculate total trades (max trade number that has been assigned)
     if trade_string == "No Buy/Sell":
@@ -2412,9 +2464,6 @@ def process_trade(ticker, asset_type, action, position, price, quantity_buy, dat
     highest_traded_volume = get_highest_traded_volume()
     lowest_traded_volume = get_lowest_traded_volume()
     
-    # Calculate Average Holding Days
-    average_holding_days = calculate_average_holding_days()
-
     # Store asset type for this ticker
     if asset_type:
         portfolio_state['asset_types'][ticker] = asset_type

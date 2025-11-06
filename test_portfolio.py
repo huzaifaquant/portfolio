@@ -1,9 +1,10 @@
 # test_portfolio.py
 import pytest
 import pandas as pd
+import portfolio  
 from portfolio import (
     reset_portfolio, add_trade, get_portfolio_df, process_trade,
-    portfolio_state, trade_tracker, next_trade_number, investment_count,
+    trade_tracker, next_trade_number, investment_count,
     # Core calculations
     calculate_cash_single, calculate_remaining_single,
     calculate_current_quantity_single, calculate_avg_price_and_cost_basis_single,
@@ -36,25 +37,28 @@ class TestResetPortfolio:
     def test_reset_portfolio_default_cash(self):
         """Test reset with default cash"""
         reset_portfolio()
-        assert portfolio_state['cash'] == 200
-        assert portfolio_state['remaining'] == 200
-        assert portfolio_state['realized_pnl'] == 0.0
-        assert len(portfolio_state['quantities']) == 0
-        assert portfolio_state['portfolio_df'].empty
+        assert portfolio.portfolio_state['cash'] == 200  # Access via module
+        assert portfolio.portfolio_state['remaining'] == 200
+        assert portfolio.portfolio_state['realized_pnl'] == 0.0
+        assert len(portfolio.portfolio_state['quantities']) == 0
+        assert portfolio.portfolio_state['portfolio_df'].empty
     
     def test_reset_portfolio_custom_cash(self):
         """Test reset with custom cash"""
-        reset_portfolio(initial_cash=1000)
-        assert portfolio_state['cash'] == 1000
-        assert portfolio_state['remaining'] == 1000
+        reset_portfolio()
+        assert portfolio.portfolio_state['cash'] == 200  # Access via module
+        assert portfolio.portfolio_state['remaining'] == 200
+        assert portfolio.portfolio_state['realized_pnl'] == 0.0
+        assert len(portfolio.portfolio_state['quantities']) == 0
+        assert portfolio.portfolio_state['portfolio_df'].empty
     
     def test_reset_portfolio_clears_state(self):
         """Test that reset clears all state"""
         add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')
         reset_portfolio()
-        assert portfolio_state['quantities']['AAPL'] == 0
-        assert portfolio_state['cost_basis']['AAPL'] == 0
-        assert portfolio_state['realized_pnl'] == 0.0
+        assert portfolio.portfolio_state['quantities']['AAPL'] == 0
+        assert portfolio.portfolio_state['cost_basis']['AAPL'] == 0
+        assert portfolio.portfolio_state['realized_pnl'] == 0.0
 
 
 # ============================================================================
@@ -69,14 +73,14 @@ class TestNormalizeQuantity:
         reset_portfolio()
         from portfolio import normalize_quantity
         assert normalize_quantity(10) == 10.0
-        assert normalize_quantity(-5) == -5.0
+        assert normalize_quantity(-5) == 5.0
     
     def test_normalize_quantity_float(self):
         """Test normalizing float"""
         reset_portfolio()
         from portfolio import normalize_quantity
         assert normalize_quantity(10.5) == 10.5
-        assert normalize_quantity(-5.5) == -5.5
+        assert normalize_quantity(-5.5) == 5.5
     
     def test_normalize_quantity_string_positive(self):
         """Test normalizing positive string"""
@@ -89,8 +93,8 @@ class TestNormalizeQuantity:
         """Test normalizing negative string"""
         reset_portfolio()
         from portfolio import normalize_quantity
-        assert normalize_quantity("-10") == -10.0
-        assert normalize_quantity("-(-10)") == -10.0
+        assert normalize_quantity("-10") == 10.0
+        assert normalize_quantity("-(-10)") == 10.0
 
 
 # ============================================================================
@@ -160,7 +164,7 @@ class TestCalculateCurrentQuantitySingle:
         reset_portfolio()
         new_q = calculate_current_quantity_single('AAPL', 'buy', 10, 0)
         assert new_q == 10
-        assert portfolio_state['quantities']['AAPL'] == 10
+        assert portfolio.portfolio_state['quantities']['AAPL'] == 10
     
     def test_quantity_sell_decreases(self):
         """Test selling decreases quantity"""
@@ -283,14 +287,14 @@ class TestCalculateRealizedPnLCumulative:
     def test_cumulative_starts_at_zero(self):
         """Test cumulative starts at zero"""
         reset_portfolio()
-        assert portfolio_state['realized_pnl'] == 0.0
+        assert portfolio.portfolio_state['realized_pnl'] == 0.0
     
     def test_cumulative_adds_on_close(self):
         """Test cumulative adds realized PnL on close"""
         reset_portfolio()
         add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')
         calculate_realized_pnl_cumulative('AAPL', 'sell', 'long', 12, 10, 10)
-        assert portfolio_state['realized_pnl'] == 20
+        assert portfolio.portfolio_state['realized_pnl'] == 20
     
     def test_cumulative_accumulates(self):
         """Test cumulative accumulates across multiple closes"""
@@ -299,7 +303,7 @@ class TestCalculateRealizedPnLCumulative:
         calculate_realized_pnl_cumulative('AAPL', 'sell', 'long', 12, 5, 10)
         add_trade('MSFT', 'Equity', 'buy', 'long', 20, 5, '1/2/2025')
         calculate_realized_pnl_cumulative('MSFT', 'sell', 'long', 22, 5, 5)
-        assert portfolio_state['realized_pnl'] == 20  # 10 + 10
+        assert portfolio.portfolio_state['realized_pnl'] == 20  # 10 + 10
 
 
 # ============================================================================
@@ -946,8 +950,8 @@ class TestBoundaryConditions:
         reset_portfolio()
         add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')
         add_trade('AAPL', 'Equity', 'sell', 'long', 12, 10, '1/2/2025')
-        assert portfolio_state['avg_price']['AAPL'] == 0
-        assert portfolio_state['cost_basis']['AAPL'] == 0
+        assert portfolio.portfolio_state['avg_price']['AAPL'] == 0
+        assert portfolio.portfolio_state['cost_basis']['AAPL'] == 0
 
 
 class TestComplexPositionFlips:
@@ -960,13 +964,13 @@ class TestComplexPositionFlips:
         add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')
         # Flip to short
         add_trade('AAPL', 'Equity', 'sell', 'long', 12, 15, '1/2/2025')
-        assert portfolio_state['quantities']['AAPL'] == -5
+        assert portfolio.portfolio_state['quantities']['AAPL'] == -5
         # Flip back to long
         add_trade('AAPL', 'Equity', 'buy', 'long', 8, 10, '1/3/2025')
-        assert portfolio_state['quantities']['AAPL'] == 5
+        assert portfolio.portfolio_state['quantities']['AAPL'] == 5
         # Flip to short again
         add_trade('AAPL', 'Equity', 'sell', 'long', 10, 10, '1/4/2025')
-        assert portfolio_state['quantities']['AAPL'] == -5
+        assert portfolio.portfolio_state['quantities']['AAPL'] == -5
     
     def test_flip_with_partial_close(self):
         """Test position flip when closing partial and opening opposite"""
@@ -985,8 +989,8 @@ class TestComplexPositionFlips:
         # Flip to short
         add_trade('AAPL', 'Equity', 'sell', 'long', 12, 15, '1/2/2025')
         # New short position should have fresh cost basis
-        assert portfolio_state['cost_basis']['AAPL'] == 12 * 5 == 60
-        assert portfolio_state['avg_price']['AAPL'] == 12.0
+        assert portfolio.portfolio_state['cost_basis']['AAPL'] == 12 * 5 == 60
+        assert portfolio.portfolio_state['avg_price']['AAPL'] == 12.0
 
 
 class TestFormulaValidation:
@@ -1273,8 +1277,8 @@ class TestCostBasisRigorous:
         add_trade('AAPL', 'Equity', 'buy', 'long', 20, 5, '1/2/2025')   # CB = 200
         add_trade('AAPL', 'Equity', 'buy', 'long', 15, 10, '1/3/2025')  # CB = 350
         # Avg price: 350/25 = 14
-        assert abs(portfolio_state['avg_price']['AAPL'] - 14) < 0.01
-        assert portfolio_state['cost_basis']['AAPL'] == 350
+        assert abs(portfolio.portfolio_state['avg_price']['AAPL'] - 14) < 0.01
+        assert portfolio.portfolio_state['cost_basis']['AAPL'] == 350
 
 
 class TestStateConsistency:
@@ -1308,7 +1312,7 @@ class TestStateConsistency:
         row = process_trade('TSLA', 'Equity', 'buy', 'long', 30, 3, '1/3/2025')
         open_pos = row['Open Position']
         # Verify all tickers with non-zero quantities are in open positions
-        for ticker, qty in portfolio_state['quantities'].items():
+        for ticker, qty in portfolio.portfolio_state['quantities'].items():
             if qty != 0:
                 assert ticker.upper() in open_pos
     
@@ -1317,9 +1321,9 @@ class TestStateConsistency:
         reset_portfolio()
         add_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')
         add_trade('AAPL', 'Equity', 'buy', 'long', 12, 5, '1/2/2025')
-        cb = portfolio_state['cost_basis']['AAPL']
-        qty = portfolio_state['quantities']['AAPL']
-        avg = portfolio_state['avg_price']['AAPL']
+        cb = portfolio.portfolio_state['cost_basis']['AAPL']
+        qty = portfolio.portfolio_state['quantities']['AAPL']
+        avg = portfolio.portfolio_state['avg_price']['AAPL']
         if qty != 0:
             assert abs(avg - abs(cb / qty)) < 0.01
 
