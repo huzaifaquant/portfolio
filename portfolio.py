@@ -253,16 +253,23 @@ def calculate_remaining_single(action, price, q_in, old_quantity, old_cost_basis
         - Buy Short (Cover): remaining = previous_remaining + [initial + (initial - final)]
                               where initial = avg_price * close_qty, final = price * close_qty
     
+    What is "Cover"?
+        - Covering a short position means buying back the shares you borrowed and sold short
+        - When you short sell, you borrow shares and sell them (you receive cash)
+        - When you cover, you buy back those shares to close the short position (you pay cash)
+        - The "cover" quantity is the number of shares you're buying back to close the short
+        - Example: Short 10 shares at $100 → receive $1,000. Cover 10 shares at $90 → pay $900.
+                   Net cash flow: $1,000 + ($1,000 - $900) = $1,100 (profit of $100)
+    
     Position flips automatically when quantity crosses zero:
         - Long selling more than owned: closes long, opens short with excess
         - Short buying more than owed: covers short, opens long with excess
     
     Args:
         action (str): Trade action ('buy', 'sell', 'hold')
-        position (str): Position type ('long', 'short', 'hold')
         price (float): Trade price
         q_in (float): Quantity traded
-        old_quantity (float): Quantity before trade
+        old_quantity (float): Quantity before trade (positive for long, negative for short)
         old_cost_basis (float): Cost basis before trade
     
     Returns:
@@ -272,6 +279,8 @@ def calculate_remaining_single(action, price, q_in, old_quantity, old_cost_basis
         - Handles position flips (long to short, short to long)
         - Handles partial closes (closing some shares, keeping rest)
         - Uses previous avg price for closing calculations
+        - When covering a short: only the shares actually owed are "covered"
+          (if buying more than owed, excess opens a new long position)
     """
     rem = portfolio_state['remaining']
     a = str(action).lower()
@@ -1026,6 +1035,10 @@ def calculate_trade_win_loss(trade_string, realized_pnl_at_point):
     """
     # Check if trade is closing based on trade string format
     if trade_string == "No Buy/Sell" or "- Close" not in trade_string:
+        return None
+    
+    # Check if realized_pnl_at_point is None (can happen when position flips or no closing occurs)
+    if realized_pnl_at_point is None:
         return None
     
     # Trade is closing, check the realized PnL at point of time
@@ -2237,6 +2250,10 @@ def process_trade(ticker, asset_type, action, position, price, quantity_buy, dat
     Returns:
         dict: Row dictionary with all calculated values
     
+    Raises:
+        ValueError: If attempting to open a different position type (long vs short) on the same ticker
+                   when a position already exists. Must close current position first.
+    
     Edge cases:
         - Handles position flips (long to short, short to long)
         - Handles partial position closes
@@ -2246,12 +2263,52 @@ def process_trade(ticker, asset_type, action, position, price, quantity_buy, dat
     """
     ticker = str(ticker).strip().upper()
     
-    # Normalize quantity input (handles various formats)
+        # Normalize quantity input (handles various formats)
     q_in = normalize_quantity(quantity_buy)
 
     # Get previous state
     old_q = portfolio_state['quantities'][ticker]
     old_cb = portfolio_state['cost_basis'][ticker]
+    
+    # Calculate what the new quantity would be to check for natural flips
+    # We need this to distinguish between natural flips and explicit opposite position opening
+    a = str(action).lower()
+    qty = abs(q_in) if q_in < 0 else q_in
+    
+    if a == 'hold':
+        new_q_calc = old_q
+    elif a == 'buy':
+        new_q_calc = old_q + qty
+    elif a == 'sell':
+        new_q_calc = old_q - qty
+    else:
+        new_q_calc = old_q
+    
+    # Validate: Cannot explicitly open a different position type on the same ticker
+    # Natural position flips through arithmetic are allowed
+    action_lower = str(action).lower()
+    position_lower = str(position).lower()
+    
+    # Check if this is a natural flip (quantity crosses zero through arithmetic)
+    is_natural_flip = (old_q > 0 and new_q_calc < 0) or (old_q < 0 and new_q_calc > 0)
+    
+    if old_q > 0:  # Currently have a long position
+        # Error only if explicitly trying to open a short position (not a natural flip)
+        if position_lower == 'short' and action_lower == 'sell' and not is_natural_flip:
+            raise ValueError(
+                f"Cannot explicitly open a short position on {ticker} while holding a long position. "
+                f"Please close the long position first (current quantity: {old_q}). "
+                f"Note: Natural position flips (selling more than owned) are allowed."
+            )
+    
+    if old_q < 0:  # Currently have a short position
+        # Error only if explicitly trying to open a long position (not a natural flip)
+        if position_lower == 'long' and action_lower == 'buy' and not is_natural_flip:
+            raise ValueError(
+                f"Cannot explicitly open a long position on {ticker} while holding a short position. "
+                f"Please close the short position first (current quantity: {old_q}). "
+                f"Note: Natural position flips (buying more than owed) are allowed."
+            )
 
     # Calculate cash and remaining
     cash = calculate_cash_single()

@@ -1262,8 +1262,8 @@ class TestCostBasisRigorous:
         reset_portfolio()
         add_trade('AAPL', 'Equity', 'sell', 'short', 10, 10, '1/1/2025')  # CB = 100
         add_trade('AAPL', 'Equity', 'sell', 'short', 12, 5, '1/2/2025')   # CB = 160
-        # Cover 10 shares (out of 15)
-        row = process_trade('AAPL', 'Equity', 'buy', 'long', 8, 10, '1/3/2025')
+        # Cover 10 shares (out of 15) - use position='short' when covering
+        row = process_trade('AAPL', 'Equity', 'buy', 'short', 8, 10, '1/3/2025')
         # Remaining: 5 shares short
         # Cost basis: 160 * (5/15) = 53.333
         assert abs(row['Cost Basis'] - 53.333) < 0.1
