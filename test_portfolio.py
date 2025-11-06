@@ -198,38 +198,45 @@ class TestCalculateAvgPriceAndCostBasisSingle:
     def test_cost_basis_long_single_buy(self):
         """Test cost basis for single long buy"""
         reset_portfolio()
-        avg_p, cb = calculate_avg_price_and_cost_basis_single('AAPL', 'buy', 10, 10, 10, 0, 0)
+        avg_p, cb = calculate_avg_price_and_cost_basis_single('AAPL', 'buy', 10, 10, 0, 10, 0)
         assert cb == 100
         assert avg_p == 10.0
     
     def test_cost_basis_long_multiple_buys(self):
         """Test cost basis for multiple long buys"""
         reset_portfolio()
-        calculate_avg_price_and_cost_basis_single('AAPL', 'buy', 10, 10, 10, 0, 0)
-        avg_p, cb = calculate_avg_price_and_cost_basis_single('AAPL', 'buy', 12, 5, 15, 10, 100)
+        calculate_avg_price_and_cost_basis_single('AAPL', 'buy', 10, 10, 0, 10, 0)
+        avg_p, cb = calculate_avg_price_and_cost_basis_single('AAPL', 'buy', 12, 5, 10, 15, 100)
         assert cb == 160
         assert abs(avg_p - 10.6667) < 0.01
     
     def test_cost_basis_long_partial_sell(self):
         """Test cost basis after partial sell"""
         reset_portfolio()
-        calculate_avg_price_and_cost_basis_single('AAPL', 'buy', 10, 10, 10, 0, 0)
-        avg_p, cb = calculate_avg_price_and_cost_basis_single('AAPL', 'sell', 12, 5, 5, 10, 100)
-        assert cb == 50
+        # First buy: open position with 10 shares at $10
+        calculate_avg_price_and_cost_basis_single('AAPL', 'buy', 10, 10, 0, 10, 0)
+        # Partial sell: sell 5 shares, leaving 5 shares
+        # old_quantity=10, new_quantity=5 (10-5), old_cost_basis=100
+        avg_p, cb = calculate_avg_price_and_cost_basis_single('AAPL', 'sell', 12, 5, 10, 5, 100)
+        assert cb == 50  # 100 * (5/10) = 50
         assert avg_p == 10.0
     
     def test_cost_basis_short_single_sell(self):
         """Test cost basis for single short sell"""
         reset_portfolio()
-        avg_p, cb = calculate_avg_price_and_cost_basis_single('AAPL', 'sell', 10, 10, -10, 0, 0)
+        # Opening a new short position: old_quantity=0, new_quantity=-10
+        avg_p, cb = calculate_avg_price_and_cost_basis_single('AAPL', 'sell', 10, 10, 0, -10, 0)
         assert cb == 100
         assert avg_p == 10.0
     
     def test_cost_basis_full_close_resets(self):
         """Test cost basis resets on full close"""
         reset_portfolio()
-        calculate_avg_price_and_cost_basis_single('AAPL', 'buy', 10, 10, 10, 0, 0)
-        avg_p, cb = calculate_avg_price_and_cost_basis_single('AAPL', 'sell', 12, 10, 0, 10, 100)
+        # First buy: open position with 10 shares at $10
+        calculate_avg_price_and_cost_basis_single('AAPL', 'buy', 10, 10, 0, 10, 0)
+        # Full sell: sell all 10 shares, leaving 0 shares
+        # old_quantity=10, new_quantity=0 (10-10), old_cost_basis=100
+        avg_p, cb = calculate_avg_price_and_cost_basis_single('AAPL', 'sell', 12, 10, 10, 0, 100)
         assert cb == 0
         assert avg_p == 0.0
 
@@ -915,7 +922,7 @@ class TestEdgeCasesNegativeValues:
         """Test normalizing negative quantity strings"""
         reset_portfolio()
         from portfolio import normalize_quantity
-        assert normalize_quantity("-(-10)") == -10.0
+        assert normalize_quantity("-(-10)") == 10.0
         assert normalize_quantity("(-10)") == 10.0
 
 
@@ -927,7 +934,7 @@ class TestBoundaryConditions:
         reset_portfolio(initial_cash=100)
         row = process_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, '1/1/2025')
         assert row['Remaining'] == 0
-        assert row['Buyable/Sellable'] == 0
+        assert row['Buyable/Sellable'] == 10 # Uses Previous Remaining
     
     def test_insufficient_cash_buy(self):
         """Test buying when cash is insufficient"""
@@ -1161,11 +1168,11 @@ class TestRealizedPnLRigorous:
         """Test realized PnL when covering short"""
         reset_portfolio()
         add_trade('AAPL', 'Equity', 'sell', 'short', 10, 10, '1/1/2025')
-        # Cover 5 shares
-        row = process_trade('AAPL', 'Equity', 'buy', 'long', 8, 5, '1/2/2025')
+        # Cover 5 shares - position should be 'short', not 'long'
+        row = process_trade('AAPL', 'Equity', 'buy', 'short', 8, 5, '1/2/2025')
         assert row['PnL Realized at Point of Time'] == (10 - 8) * 5 == 10
-        # Cover remaining 5
-        row = process_trade('AAPL', 'Equity', 'buy', 'long', 9, 5, '1/3/2025')
+        # Cover remaining 5 - position should be 'short', not 'long'
+        row = process_trade('AAPL', 'Equity', 'buy', 'short', 9, 5, '1/3/2025')
         assert row['PnL Realized at Point of Time'] == (10 - 9) * 5 == 5
         assert row['PnL Realized Cummulative'] == 10 + 5 == 15
     
@@ -1334,11 +1341,20 @@ class TestStressTests:
     def test_100_trades_single_ticker(self):
         """Test 100 trades on single ticker"""
         reset_portfolio(initial_cash=100000)
+        from datetime import datetime, timedelta
+        
+        # Start from a base date
+        base_date = datetime(2025, 1, 1)
+        
         for i in range(100):
             action = 'buy' if i % 2 == 0 else 'sell'
             qty = 10 if action == 'buy' else 5
-            process_trade('AAPL', 'Equity', action, 'long', 10 + i*0.1, qty, f'1/{i+1}/2025')
-        
+            # Increment date by i days
+            trade_date = base_date + timedelta(days=i)
+            # Format as MM/DD/YYYY
+            date_str = trade_date.strftime('%m/%d/%Y')
+            process_trade('AAPL', 'Equity', action, 'long', 10 + i*0.1, qty, date_str)
+            
         df = get_portfolio_df()
         assert len(df) == 100
         # Verify final state is valid
@@ -1346,12 +1362,21 @@ class TestStressTests:
         assert final_row['Equity: Total PV + Remaining'] == final_row['Total PV'] + final_row['Remaining']
     
     def test_50_tickers_100_trades_total(self):
+
         """Test 50 different tickers with 100 total trades"""
         reset_portfolio(initial_cash=100000)
+        from datetime import datetime, timedelta
+        
         tickers = [f'TICK{i}' for i in range(50)]
+        base_date = datetime(2025, 1, 1)
+        
         for i in range(100):
             ticker = tickers[i % 50]
-            process_trade(ticker, 'Equity', 'buy', 'long', 10, 10, f'1/{i+1}/2025')
+            # Increment date by i days
+            trade_date = base_date + timedelta(days=i)
+            # Format as MM/DD/YYYY
+            date_str = trade_date.strftime('%m/%d/%Y')
+            process_trade(ticker, 'Equity', 'buy', 'long', 10, 10, date_str)
         
         df = get_portfolio_df()
         assert len(df) == 100
@@ -1360,12 +1385,21 @@ class TestStressTests:
     def test_rapid_flips_same_ticker(self):
         """Test rapid position flips on same ticker"""
         reset_portfolio(initial_cash=10000)
+        from datetime import datetime, timedelta
+        
+        base_date = datetime(2025, 1, 1)
+        
         # Rapidly flip between long and short
         for i in range(20):
+            # Increment date by i days
+            trade_date = base_date + timedelta(days=i)
+            # Format as MM/DD/YYYY
+            date_str = trade_date.strftime('%m/%d/%Y')
+            
             if i % 2 == 0:
-                process_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, f'1/{i+1}/2025')
+                process_trade('AAPL', 'Equity', 'buy', 'long', 10, 10, date_str)
             else:
-                process_trade('AAPL', 'Equity', 'sell', 'long', 12, 10, f'1/{i+1}/2025')
+                process_trade('AAPL', 'Equity', 'sell', 'long', 10, 11, date_str)
         
         df = get_portfolio_df()
         assert len(df) == 20
