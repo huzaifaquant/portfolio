@@ -3650,11 +3650,17 @@ HTML_TEMPLATE = """
             tableEl.querySelectorAll(selector).forEach((cell) => {
               cell.style.position = 'sticky';
               cell.style.left = leftOffsets[i] + 'px';
+
+              // Snap the current background color so frozen cells stay opaque
+              // and match the striped/hover styles (prevents text showing through behind).
+              const computedBg = window.getComputedStyle(cell).backgroundColor;
+              cell.style.backgroundColor = computedBg;
+
               // Slight elevation for frozen columns so they \"hover\" above the scrolling area
               if (cell.tagName === 'TH' || cell.tagName === 'TD') {
                 cell.style.boxShadow = '2px 0 6px rgba(15, 23, 42, 0.85)';
               }
-              // Keep background controlled by table styles so colors stay consistent
+
               cell.style.zIndex = cell.tagName === 'TH' ? 6 : 4;
             });
           }
