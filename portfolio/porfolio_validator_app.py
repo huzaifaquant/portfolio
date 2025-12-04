@@ -31,8 +31,8 @@ next_trade_number = 1  # Global counter for next new trade
 investment_count = 0  # Cumulative count of positions opened (long buy or short sell)
 
 COLUMNS = [
-    'Date','Ticker', 'Asset Type','Side','Direction','Initial Balance','Buyable/Sellable',
-    'Quantity Buy','Available Balance','Current Quantity','Price',
+    'Date','Ticker', 'Asset Type','Side','Direction','Quantity Buy','Initial Balance','Buyable/Sellable',
+    'Available Balance','Current Quantity','Price',
     'Avg Price','Cost Basis','Equity',
     'PnL (Long) Unrealized','PnL (Short) Unrealized','Pnl Unrealized','PnL Unrealized Total Value for Current Ticker','PnL realized Total Value for Current Ticker',
     'PnL Realized at Point of Time','PnL Unrealized at Point of Time',
@@ -3488,11 +3488,20 @@ HTML_TEMPLATE = """
         border-radius: 0.75rem;
         background: #020617;
       }
+      .table-wrapper {
+        position: relative;
+        max-height: 70vh;
+        overflow-x: auto;
+        overflow-y: auto;
+        border-radius: 0.75rem;
+        background: #020617;
+      }
       table.dataTable thead th {
-        position: sticky;
+        position: sticky !important;
         top: 0;
         background: #020617;
         color: #e5e7eb;
+        z-index: 5;
       }
       table.dataTable tbody tr:hover {
         background-color: #0b1120;
@@ -3631,8 +3640,7 @@ HTML_TEMPLATE = """
             paging: false,   // show all rows on a single page
             info: false,     // hide "showing X of Y" text
             ordering: true,
-            searching: true,
-            scrollX: true
+            searching: true
           });
         }
       });
