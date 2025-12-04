@@ -1,8 +1,8 @@
 import io
 from collections import defaultdict
 from typing import Any, Optional
-
 import pandas as pd
+import numpy as np
 from flask import Flask, render_template_string, request, send_file
 
 # ---------- Display (optional) ----------
@@ -25,23 +25,21 @@ portfolio_state = {
     'portfolio_df': None             # accumulator DataFrame
 }
 
-# Last computed portfolio results for export
-last_result_df: Optional[pd.DataFrame] = None
-
 # Track trade numbers per ticker
 trade_tracker = {}  # {ticker: trade_number} - tracks active trades
 next_trade_number = 1  # Global counter for next new trade
 investment_count = 0  # Cumulative count of positions opened (long buy or short sell)
 
 COLUMNS = [
-    'Date','Ticker', 'Asset Type','Side','Direction','Current Direction','Initial Balance','Buyable/Sellable',
+    'Date','Ticker', 'Asset Type','Side','Direction','Initial Balance','Buyable/Sellable',
     'Quantity Buy','Available Balance','Current Quantity','Price',
     'Avg Price','Cost Basis','Equity',
     'PnL (Long) Unrealized','PnL (Short) Unrealized','Pnl Unrealized','PnL Unrealized Total Value for Current Ticker','PnL realized Total Value for Current Ticker',
+    'PnL Realized at Point of Time','PnL Unrealized at Point of Time',
     'Equity (Long)','Equity (Short)','Open Position','Open Equity',
     'Total Equity','Account Value','Realized PnL at Point of Time (Portfolio)','Unrealized PnL at Point of Time (Portfolio)','Total PnL Overall (Unrealized+Realized)',
     'Daily PnL (Unrealized+Realized)','Liquidation Price','Take Profit','Stop Loss', 
-    'Last Day Pnl / Daily $', 'Daily %', 'Cumulative %', 'Investment Count', 'Performance', 'Asset Count',
+    'Last Day Pnl / Daily $', 'Daily %', 'Cumulative %', 'Investment Count', 'Performance', 'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Asset Count',
     'Trade No. (Position - Trade no. - Current Quantity)', 'Total Trades', 'Win/Loss', 'Win Rate', 'Win:Loss Ratio', 
     'Trades/Month', 'Absolute Quantity Counts', 'Most Traded Symbol', 'Most Bought', 'Least Traded',
     'Avg Losing PnL', 'Avg Winning PnL', 'Most Profitable', 'Least Profitable', 'Max Drawdown',
@@ -50,6 +48,7 @@ COLUMNS = [
     'Distribution', 'Distribution in %',
     'Equity Distribution (Market Cap)', 'Equity Distribution (Industry)', 'Equity Distribution (Sector)'
 ]
+
 
 # ---------- Lifecycle ----------
 
@@ -180,7 +179,7 @@ def normalize_quantity(q):
         return abs(float(inner))
     return abs(float(s))
 
-def get_or_create_trade_number(ticker, old_q, new_q, action):
+def get_or_create_trade_number(ticker, old_q, new_q, side):
     """
     Determine trade number for a ticker based on position state.
     
@@ -189,28 +188,28 @@ def get_or_create_trade_number(ticker, old_q, new_q, action):
         - If old_q != 0 and new_q != 0: Continues existing trade (keep same trade number)
         - If old_q != 0 and new_q == 0: Closes existing trade (keep same trade number, mark as closed)
         - If old_q == 0 and new_q == 0: No trade
-        - If action == 'hold': Returns existing trade number if position exists, else None
+        - If side == 'hold': Returns existing trade number if position exists, else None
     
     Args:
         ticker (str): Ticker symbol
         old_q (float): Quantity before this trade
         new_q (float): Quantity after this trade
-        action (str): Trade action ('buy', 'sell', 'hold')
+        side (str): Trade side ('buy', 'sell', 'hold')
     
     Returns:
         int or None: Trade number if trade exists, None otherwise
     
     Edge cases:
         - Handles position flips (long to short, short to long)
-        - Handles hold actions (maintains existing trade number)
+        - Handles hold sides (maintains existing trade number)
     """
     global next_trade_number
     ticker = str(ticker).upper()
     
-    action_lower = str(action).lower()
+    side_lower = str(side).lower()
     
-    # If action is 'hold', check if position exists
-    if action_lower == 'hold':
+    # If side is 'hold', check if position exists
+    if side_lower == 'hold':
         if ticker in trade_tracker and old_q != 0:
             # Position exists but holding, return existing trade number
             return trade_tracker[ticker]
@@ -241,14 +240,14 @@ def get_or_create_trade_number(ticker, old_q, new_q, action):
     # No position (old_q == 0, new_q == 0)
     return None
 
-def format_trade_string(action, current_direction, trade_number, new_q):
+def format_trade_string(side, current_direction, trade_number, new_q):
     """
     Format trade string for display.
     
-    Format: "Direction - Action - #TradeNo Trade - Quantity" or "... - 0 - Close"
+    Format: "Direction - side - #TradeNo Trade - Quantity" or "... - 0 - Close"
     
     Args:
-        action (str): Trade action ('buy', 'sell', 'hold')
+        side (str): Trade side ('buy', 'sell', 'hold')
         current_direction (str): Current direction ('long', 'short', 'hold')
         trade_number (int or None): Trade number
         new_q (float): New quantity after trade
@@ -264,7 +263,7 @@ def format_trade_string(action, current_direction, trade_number, new_q):
     if trade_number is None:
         return "No Buy/Sell"
     
-    action_str = str(action)
+    side_str = str(side)
     dir_str = str(current_direction)
     
     # Format quantity - use absolute value since direction already explains it
@@ -275,22 +274,22 @@ def format_trade_string(action, current_direction, trade_number, new_q):
         quantity_str = str(int(abs(new_q)))
     
     # Include Buy/Sell in the output
-    return f" {dir_str.capitalize()} - {action_str.capitalize()} - #{trade_number} Trade - {quantity_str}"
+    return f" {dir_str.capitalize()} - {side_str.capitalize()} - #{trade_number} Trade - {quantity_str}"
 
 # ---------- Core Single-Trade Calculations ----------
 
 def calculate_cash_single():
     """
-    Get the initial balance amount (constant after initialization).
+    Get the initial cash amount (constant after initialization).
     
-    Formula: Initial Balance = starting capital (does not change)
+    Formula: Cash = Initial Cash (does not change)
     
     Returns:
-        float: Initial balance amount
+        float: Initial cash amount
     """
     return portfolio_state['cash']
 
-def calculate_remaining_single(action, price, q_in, old_quantity, old_cost_basis):
+def calculate_remaining_single(side, price, q_in, old_quantity, old_cost_basis):
     """
     Calculate remaining cash after a trade.
     
@@ -314,7 +313,7 @@ def calculate_remaining_single(action, price, q_in, old_quantity, old_cost_basis
         - Short buying more than owed: covers short, opens long with excess
     
     Args:
-        action (str): Trade action ('buy', 'sell', 'hold')
+        side (str): Trade side ('buy', 'sell', 'hold')
         price (float): Trade price
         q_in (float): Quantity traded
         old_quantity (float): Quantity before trade (positive for long, negative for short)
@@ -331,7 +330,7 @@ def calculate_remaining_single(action, price, q_in, old_quantity, old_cost_basis
           (if buying more than owed, excess opens a new long position)
     """
     rem = portfolio_state['remaining']
-    a = str(action).lower()
+    a = str(side).lower()
     qty = abs(q_in) if q_in < 0 else q_in
     if qty == 0 or a == 'hold':
         return rem
@@ -377,7 +376,7 @@ def calculate_remaining_single(action, price, q_in, old_quantity, old_cost_basis
 
     return rem
 
-def calculate_current_quantity_single(ticker, action, q_in, old_quantity):
+def calculate_current_quantity_single(ticker, side, q_in, old_quantity):
     """
     Calculate new quantity after trade.
     
@@ -392,7 +391,7 @@ def calculate_current_quantity_single(ticker, action, q_in, old_quantity):
     
     Args:
         ticker (str): Ticker symbol
-        action (str): Trade action ('buy', 'sell', 'hold')
+        side (str): Trade side ('buy', 'sell', 'hold')
         position (str): Position type ('long', 'short', 'hold')
         q_in (float): Quantity traded
         old_quantity (float): Quantity before trade
@@ -404,7 +403,7 @@ def calculate_current_quantity_single(ticker, action, q_in, old_quantity):
         - Handles position flips naturally through arithmetic
         - Updates global quantities dictionary
     """
-    a = str(action).lower()
+    a = str(side).lower()
     qty = abs(q_in) if q_in < 0 else q_in
 
     if a == 'hold':
@@ -419,7 +418,7 @@ def calculate_current_quantity_single(ticker, action, q_in, old_quantity):
     portfolio_state['quantities'][ticker] = new_q
     return new_q
 
-def calculate_avg_price_and_cost_basis_single(ticker, action, price, q_in, old_quantity, new_quantity, old_cost_basis):
+def calculate_avg_price_and_cost_basis_single(ticker, side, price, q_in, old_quantity, new_quantity, old_cost_basis):
     """
     Calculate average price and cost basis for net position using segment-based logic.
     
@@ -443,7 +442,7 @@ def calculate_avg_price_and_cost_basis_single(ticker, action, price, q_in, old_q
     
     Args:
         ticker (str): Ticker symbol
-        action (str): Trade action ('buy', 'sell', 'hold')
+        side (str): Trade side ('buy', 'sell', 'hold')
         price (float): Trade price
         q_in (float): Quantity traded
         old_quantity (float): Quantity before trade
@@ -453,7 +452,7 @@ def calculate_avg_price_and_cost_basis_single(ticker, action, price, q_in, old_q
     Returns:
         tuple: (avg_price, cost_basis) - Average price and cost basis after trade
     """
-    a = str(action).lower()
+    a = str(side).lower()
     qty = abs(q_in) if q_in < 0 else q_in
     cb = old_cost_basis
 
@@ -545,9 +544,9 @@ def calculate_avg_price_and_cost_basis_single(ticker, action, price, q_in, old_q
     portfolio_state['avg_price'][ticker] = avg_price
     return avg_price, cb
 
-def calculate_realized_pnl_at_point_of_time(ticker, action, position, price, q_in, old_quantity):
+def calculate_realized_pnl_at_point_of_time(ticker, side, position, price, q_in, old_quantity):
     """
-    Calculate realized PnL at point of time for a specific closing action.
+    Calculate realized PnL at point of time for a specific closing side.
     
     Formula for Long positions (when selling):
         realized_pnl = (sell_price - avg_entry_price) * shares_closed
@@ -556,11 +555,11 @@ def calculate_realized_pnl_at_point_of_time(ticker, action, position, price, q_i
         realized_pnl = (avg_entry_price - cover_price) * shares_closed
     
     This is independent and dynamic, not dependent on cumulative calculations.
-    Returns PnL for this specific closing action only.
+    Returns PnL for this specific closing side only.
     
     Args:
         ticker (str): Ticker symbol
-        action (str): Trade action ('buy', 'sell', 'hold')
+        side (str): Trade side ('buy', 'sell', 'hold')
         position (str): Position type ('long', 'short', 'hold')
         price (float): Trade price
         q_in (float): Quantity traded
@@ -574,7 +573,7 @@ def calculate_realized_pnl_at_point_of_time(ticker, action, position, price, q_i
         - Only realizes on shares actually closed (min of qty and owned/owed)
         - Returns None if no closing occurs or avg_price is 0
     """
-    a = str(action).lower()
+    a = str(side).lower()
     pos = str(position).lower()
     
     # Read old avg price from state (before it gets updated)
@@ -602,7 +601,7 @@ def calculate_realized_pnl_at_point_of_time(ticker, action, position, price, q_i
 
     return realized_pnl_point
 
-def calculate_realized_pnl_cumulative(ticker, action, position, price, q_in, old_quantity):
+def calculate_realized_pnl_cumulative(ticker, side, position, price, q_in, old_quantity):
     """
     Calculate cumulative realized PnL across ALL tickers.
     
@@ -615,7 +614,7 @@ def calculate_realized_pnl_cumulative(ticker, action, position, price, q_in, old
     
     Args:
         ticker (str): Ticker symbol
-        action (str): Trade action ('buy', 'sell', 'hold')
+        side (str): Trade side ('buy', 'sell', 'hold')
         position (str): Position type ('long', 'short', 'hold')
         price (float): Trade price
         q_in (float): Quantity traded
@@ -630,7 +629,7 @@ def calculate_realized_pnl_cumulative(ticker, action, position, price, q_in, old
         - Only realizes when closing positions (sell long or buy short)
     """
     realized = portfolio_state['realized_pnl']
-    a = str(action).lower()
+    a = str(side).lower()
     pos = str(position).lower()
     
     # Read old avg price from state (before it gets updated)
@@ -1448,8 +1447,8 @@ def calculate_most_bought(previous_df, current_ticker, current_direction, curren
     Args:
         previous_df (pd.DataFrame): Previous rows of portfolio DataFrame
         current_ticker (str): Current ticker being traded
-        current_direction (str): Current Direction argument ("long" / "short" / ...)
-        current_side (str): Current Side / action ("buy" / "sell" / ...)
+        current_direction (str): Current direction argument ("long" / "short" / ...)
+        current_side (str): Current Side / side ("buy" / "sell" / ...)
         current_qty_buy (float): Current quantity value
 
     Returns:
@@ -1527,12 +1526,12 @@ def calculate_avg_losing_winning_pnl(previous_df, current_realized_pnl_at_point)
         - Filters out None values
         - Only considers realized PnL at point of time (not cumulative)
     """
-    # Get all previous realized PnL at point of time values (portfolio-level cumulative realized)
-    if len(previous_df) > 0 and 'Realized PnL at Point of Time (Portfolio)' in previous_df.columns:
-        previous_pnl_values = previous_df['Realized PnL at Point of Time (Portfolio)'].tolist()
-    elif len(previous_df) > 0 and 'PnL Realized at Point of Time' in previous_df.columns:
-        # Backward compatibility with older column name
+    # Get all previous realized PnL at point of time values (per-trade, irrespective of ticker)
+    if len(previous_df) > 0 and 'PnL Realized at Point of Time' in previous_df.columns:
         previous_pnl_values = previous_df['PnL Realized at Point of Time'].tolist()
+    elif len(previous_df) > 0 and 'Realized PnL at Point of Time (Portfolio)' in previous_df.columns:
+        # Backward compatibility: older sheets may only have the cumulative portfolio column
+        previous_pnl_values = previous_df['Realized PnL at Point of Time (Portfolio)'].tolist()
     else:
         previous_pnl_values = []
 
@@ -1672,7 +1671,7 @@ def calculate_max_drawdown(current_total_pv):
     
     return max_drawdown
 
-def update_max_investment_history(ticker, price, quantity_buy, action, old_quantity):
+def update_max_investment_history(ticker, price, quantity_buy, side, old_quantity):
     """
     Update the historical maximum investment for a ticker.
     
@@ -1681,38 +1680,38 @@ def update_max_investment_history(ticker, price, quantity_buy, action, old_quant
     Logic:
         - Tracks maximum investment value (price * quantity) for each ticker
         - Only updates when opening/expanding positions (entry points)
-        - Tracks both 'buy' actions (long positions) and 'sell' actions (short positions)
+        - Tracks both 'buy' sides (long positions) and 'sell' sides (short positions)
         - Does NOT update when closing positions
     
     Args:
         ticker (str): Ticker symbol
         price (float): Price of the trade
         quantity_buy (float): Quantity in the trade (positive for buy, positive for sell)
-        action (str): Trade action ('buy', 'sell', 'hold')
+        side (str): Trade side ('buy', 'sell', 'hold')
         old_quantity (float): Quantity before this trade
     
     Edge cases:
-        - Only tracks 'buy' actions for long positions
-        - Only tracks 'sell' actions when old_quantity <= 0 (opening short)
+        - Only tracks 'buy' sides for long positions
+        - Only tracks 'sell' sides when old_quantity <= 0 (opening short)
         - Does not track when closing long positions (old_quantity > 0 and selling)
         - Does not update if investment_value is not greater than current max
     """
-    action_lower = str(action).lower()
+    side_lower = str(side).lower()
     qty = abs(quantity_buy) if quantity_buy < 0 else quantity_buy
 
     # Track maximum investment for:
-    # 1. Buy actions (opening/expanding long positions)
-    # 2. Sell actions that open/expand short positions (when old_quantity <= 0)
-    if action_lower == 'buy':
-        # Buy action: opening/expanding long position
+    # 1. Buy sides (opening/expanding long positions)
+    # 2. Sell sides that open/expand short positions (when old_quantity <= 0)
+    if side_lower == 'buy':
+        # Buy side: opening/expanding long position
         # Formula: investment_value = price * quantity
         investment_value = price * qty
         current_max = portfolio_state['max_investment_history'].get(ticker, 0.0)
         if investment_value > current_max:
             portfolio_state['max_investment_history'][ticker] = investment_value
 
-    elif action_lower == 'sell':
-        # Sell action: check if it's opening/expanding a short position
+    elif side_lower == 'sell':
+        # Sell side: check if it's opening/expanding a short position
         # Short position opens when old_quantity <= 0 and we're selling
         if old_quantity <= 0:
             # This sell opens or expands a short position (entry point for short)
@@ -1825,7 +1824,7 @@ def calculate_holdings():
             unique_tickers.add(ticker.upper())
     return len(unique_tickers)
 
-def update_traded_volume_history(price, quantity_buy, action):
+def update_traded_volume_history(price, quantity_buy, side):
     """
     Update the historical highest and lowest traded volume.
     
@@ -1833,26 +1832,26 @@ def update_traded_volume_history(price, quantity_buy, action):
     
     Logic:
         - Tracks maximum and minimum traded volume across all trades
-        - Updates when action is 'buy' or 'sell' (not 'hold')
-        - Tracks based on the action (buy/sell), not the resulting position
+        - Updates when side is 'buy' or 'sell' (not 'hold')
+        - Tracks based on the side (buy/sell), not the resulting position
         - This ensures we track trades even if they close positions (resulting in 'hold')
     
     Args:
         price (float): Price of the trade
         quantity_buy (float): Quantity in the trade
-        action (str): Trade action ('buy', 'sell', 'hold')
+        side (str): Trade side ('buy', 'sell', 'hold')
         current_position (str): Current position after the trade ('long', 'short', 'hold')
     
     Edge cases:
-        - Does not update if action is 'hold'
+        - Does not update if side is 'hold'
         - Uses absolute value of quantity_buy to handle negative inputs
         - Initializes to None, then sets to first traded volume
     """
-    action_lower = str(action).lower()
+    side_lower = str(side).lower()
     
-    # Track if action is 'buy' or 'sell' (not 'hold')
+    # Track if side is 'buy' or 'sell' (not 'hold')
     # This ensures we track trades even if they close positions (resulting in 'hold')
-    if action_lower in ['buy', 'sell']:
+    if side_lower in ['buy', 'sell']:
         qty = abs(quantity_buy) if quantity_buy < 0 else quantity_buy
         # Formula: traded_volume = quantity_buy * price
         traded_volume = price * qty
@@ -1870,7 +1869,7 @@ def update_traded_volume_history(price, quantity_buy, action):
         else:
             if traded_volume < portfolio_state['lowest_traded_volume']:
                 portfolio_state['lowest_traded_volume'] = traded_volume
-    # If action is 'hold', don't update - keep last known values
+    # If side is 'hold', don't update - keep last known values
 
 def get_highest_traded_volume():
     """
@@ -2123,23 +2122,283 @@ def calculate_investment_count():
     
     Logic:
         - Investment Count increments when opening a position:
-            - Long position: when action='buy' and position='long'
-            - Short position: when action='sell' and position='short'
+            - Long position: when side='buy' and position='long'
+            - Short position: when side='sell' and position='short'
         - Does NOT increment when closing positions
         - Tracks cumulative count across all trades
     
     Formula: investment_count is incremented in process_trade() when:
-        (position == 'long' and action == 'buy') OR (position == 'short' and action == 'sell')
+        (position == 'long' and side == 'buy') OR (position == 'short' and side == 'sell')
     
     Returns:
         int: Cumulative investment count (number of positions opened)
     
     Edge cases:
         - Returns 0 if no positions have been opened
-        - Only counts opening actions, not closing actions
+        - Only counts opening sides, not closing sides
     """
     global investment_count
     return investment_count
+
+
+def calculate_sharpe_ratio(previous_df, current_realized_pnl_at_point, current_realized_pnl_cumulative, initial_balance, risk_free_rate=0.0):
+    """Calculate Sharpe Ratio at this point in time.
+
+    Formula:
+        - Portfolio Return = Realized PnL at Point of Time (Portfolio) / Initial Balance
+        - Risk Free Rate (default 0.0, configurable via parameter)
+        - Denominator (Portfolio Return Std) = Std Dev of all valid 'PnL Realized at Point of Time' values
+          from the start up to and including the current row.
+
+        Sharpe Ratio = (Portfolio Return - Risk Free Rate) / StdDev(PnL Realized at Point of Time)
+
+    Notes:
+        - Ignores None and NaN values in 'PnL Realized at Point of Time'
+        - Requires at least 2 valid observations to return a Sharpe value
+
+    Args:
+        previous_df (pd.DataFrame): Previous portfolio rows
+        current_realized_pnl_at_point (float or None): Current row's realized PnL at point of time
+        current_realized_pnl_cumulative (float): Current cumulative realized PnL (portfolio-level)
+        initial_balance (float): Initial portfolio balance
+        risk_free_rate (float, optional): Risk-free rate to subtract from portfolio return (default 0.0)
+
+    Returns:
+        float or None: Sharpe ratio value, or None if insufficient data.
+    """
+
+    # Need a valid initial balance
+    if initial_balance is None or initial_balance == 0:
+        return None
+
+    # Build list of per-trade realized PnL values up to current row (drop None/NaN)
+    values = []
+    if previous_df is not None and len(previous_df) > 0 and 'PnL Realized at Point of Time' in previous_df.columns:
+        ser = previous_df['PnL Realized at Point of Time']
+        values.extend([float(v) for v in ser if pd.notnull(v)])
+
+    # Include current value if valid
+    if current_realized_pnl_at_point is not None and not (isinstance(current_realized_pnl_at_point, float) and np.isnan(current_realized_pnl_at_point)):
+        values.append(float(current_realized_pnl_at_point))
+
+    # Need at least 2 observations for a meaningful std dev
+    if len(values) < 2:
+        return None
+
+    # Std dev of per-trade realized PnL (population std)
+    std_val = float(np.std(values))
+    if std_val == 0 or np.isnan(std_val):
+        return None
+    
+    # User uses PnL in absolute terms; scale std down to be comparable with return
+    std_val = std_val / 100.0
+
+    # Portfolio return = cumulative realized PnL / initial balance
+    portfolio_return = float(current_realized_pnl_cumulative) / float(initial_balance)
+
+    # Excess return over risk free rate
+    excess_return = portfolio_return - float(risk_free_rate)
+
+    return excess_return / std_val
+
+
+def calculate_sortino_ratio(previous_df, current_realized_pnl_at_point, current_realized_pnl_cumulative, initial_balance, risk_free_rate=0.0):
+    """Calculate Sortino Ratio at this point in time.
+
+    Same numerator as Sharpe, but denominator is **downside deviation** (std of negative returns).
+
+    Implementation here mirrors the Sharpe ratio setup:
+        - We use per-trade "returns" implicitly in % units by
+          taking raw 'PnL Realized at Point of Time' and scaling std by 100.
+        - Downside std is computed only from negative PnL values.
+
+    If there is portfolio return but **no negative PnL values yet**, the Sortino Ratio
+    is conceptually infinite, so this function returns ``float('inf')``.
+
+    Args:
+        previous_df (pd.DataFrame): Previous portfolio rows
+        current_realized_pnl_at_point (float or None): Current row's realized PnL at point of time
+        current_realized_pnl_cumulative (float): Current cumulative realized PnL (portfolio-level)
+        initial_balance (float): Initial portfolio balance
+        risk_free_rate (float, optional): Risk-free rate to subtract from portfolio return (default 0.0)
+
+    Returns:
+        float or None: Sortino ratio value, ``float('inf')`` if no downside and positive return,
+                       or None if insufficient data.
+    """
+
+    # Need a valid initial balance
+    if initial_balance is None or initial_balance == 0:
+        return None
+
+    # Build list of per-trade realized PnL values up to current row
+    values = []
+    if previous_df is not None and len(previous_df) > 0 and 'PnL Realized at Point of Time' in previous_df.columns:
+        ser = previous_df['PnL Realized at Point of Time']
+        values.extend([float(v) for v in ser if pd.notnull(v)])
+
+    if current_realized_pnl_at_point is not None and not (isinstance(current_realized_pnl_at_point, float) and np.isnan(current_realized_pnl_at_point)):
+        values.append(float(current_realized_pnl_at_point))
+
+    # Extract downside values (negative PnL only)
+    downside = [v for v in values if v < 0]
+
+    # Portfolio return (same as Sharpe numerator)
+    portfolio_return = float(current_realized_pnl_cumulative) / float(initial_balance)
+    excess_return = portfolio_return - float(risk_free_rate)
+
+    # If we have return but no downside values yet -> infinite Sortino
+    if len(downside) == 0:
+        return float('inf') if excess_return != 0 else None
+
+    if len(downside) < 2:
+        # Not enough downside observations for a stable std
+        return None
+
+    # Downside deviation (std of negative PnL values)
+    downside_std = float(np.std(downside))
+    if downside_std == 0 or np.isnan(downside_std):
+        return None
+
+    # Keep scaling consistent with Sharpe (Pnl-based, scaled down by 100)
+    downside_std = downside_std / 100.0
+
+    return excess_return / downside_std
+
+
+def calculate_calmar_ratio(previous_df, current_account_value, current_date, initial_balance, debug=False):
+    """Calculate Calmar Ratio using Account Value, maximum drawdown (MDD), and annualized return (AAR).
+
+    Calmar = ARR / MDD
+
+    Where:
+        - ARR (here) = Annualized Account Return based on Account Value and Date
+          ARR = (Account Value / Initial Balance) ** (365 / days) - 1
+          where days is the number of days from first trade date to current date.
+        - MDD is computed from the history of Account Value using peak/trough logic:
+            * Peak updates when account value makes a new high.
+            * Trough updates when price falls below the last peak and makes a new low
+              before the next peak.
+
+    Args:
+        previous_df (pd.DataFrame): Previous portfolio rows
+        current_account_value (float): Current Account Value
+        current_date (str or datetime): Date of the current row
+        initial_balance (float): Initial portfolio balance
+
+    Returns:
+        float or None: Calmar ratio, ``float('inf')`` if positive ARR but MDD is 0,
+                       or 0.0 if no drawdown and no gain/loss, or None if no data.
+    """
+
+    if initial_balance is None or initial_balance == 0:
+        if debug:
+            print("Calmar debug - invalid initial_balance", initial_balance)
+        return None
+
+    # Build full history of valid (non-NaN) account values up to current row
+    values = []
+    if previous_df is not None and len(previous_df) > 0 and 'Account Value' in previous_df.columns:
+        ser_val = previous_df['Account Value']
+        values = [float(v) for v in ser_val if pd.notnull(v)]
+
+    if current_account_value is not None and not (isinstance(current_account_value, float) and np.isnan(current_account_value)):
+        values.append(float(current_account_value))
+
+    if debug:
+        print("Calmar debug - account values (history):", values)
+
+    if not values:
+        if debug:
+            print("Calmar debug - no valid account values")
+        return None
+
+    # Build date history to compute days between first trade and current date
+    date_list = []
+    if previous_df is not None and len(previous_df) > 0 and 'Date' in previous_df.columns:
+        for d in previous_df['Date']:
+            if pd.notnull(d):
+                try:
+                    date_list.append(pd.to_datetime(d))
+                except Exception:
+                    continue
+
+    if current_date is not None:
+        try:
+            date_list.append(pd.to_datetime(current_date))
+        except Exception:
+            pass
+
+    if date_list:
+        start_date = min(date_list)
+        end_date = max(date_list)
+        days = (end_date - start_date).days
+    else:
+        days = None
+
+    if debug:
+        print("Calmar debug - dates (history):", date_list)
+        print("Calmar debug - days:", days)
+
+    # Peak/trough traversal for MDD (using Account Value history)
+    peak = values[0]
+    trough = values[0]
+    max_drawdown = 0.0
+
+    for v in values[1:]:
+        if v > peak:
+            peak = v
+            trough = v
+        elif v < trough:
+            trough = v
+            if peak > 0:
+                dd = (peak - trough) / peak
+                if dd > max_drawdown:
+                    max_drawdown = dd
+
+    if debug:
+        print("Calmar debug - peak:", peak)
+        print("Calmar debug - trough:", trough)
+        print("Calmar debug - max_drawdown:", max_drawdown)
+
+    # Ratio of current account value to initial
+    ratio = float(values[-1]) / float(initial_balance)
+
+    # Annualized Account Return (ARR)
+    if days is not None and days > 0:
+        try:
+            arr = ratio ** (365.0 / float(days)) - 1.0
+        except Exception:
+            arr = ratio - 1.0
+    else:
+        # Fallback: simple return if we cannot compute days
+        arr = ratio - 1.0
+
+    if debug:
+        print("Calmar debug - ratio:", ratio)
+        print("Calmar debug - arr (annualized):", arr)
+
+    if max_drawdown == 0:
+        # No drawdown yet: infinite if ARR>0 (profit), 0.0 if ARR==0 (flat), None if loss
+        if arr > 0.0:
+            if debug:
+                print("Calmar debug - result: inf (no drawdown, positive ARR)")
+            return float('inf')
+        elif arr == 0.0:
+            if debug:
+                print("Calmar debug - result: 0.0 (no drawdown, flat ARR)")
+            return 0.0
+        else:
+            if debug:
+                print("Calmar debug - result: None (no drawdown, negative ARR)")
+            return None
+
+    result = arr / max_drawdown
+    if debug:
+        print("Calmar debug - result (Calmar):", result)
+
+    return result
+
 
 def calculate_ytd_pnl(previous_df, current_date, current_realized_pnl_cumulative):
     """
@@ -2471,7 +2730,7 @@ def calculate_equity_distribution_sector(ticker_pv_dict):
 
 # ---------- Main entry per trade ----------
 
-def process_trade(ticker, asset_type, action, direction, price, quantity_buy, date=None, take_profit_pct=0.20, stop_loss_pct=0.10):
+def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take_profit_pct=0.20, stop_loss_pct=0.10):
     """
     Main function to process a single trade and update portfolio state.
     
@@ -2492,7 +2751,7 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
     Args:
         ticker (str): Ticker symbol
         asset_type (str): Asset type (e.g., 'Stock', 'Crypto', 'ETF')
-        action (str): Trade action ('buy', 'sell', 'hold')
+        side (str): Trade side ('buy', 'sell', 'hold')
         direction (str): Direction type ('long', 'short', 'hold')
         price (float): Trade price
         quantity_buy (float or str): Quantity to trade (can be numeric or string like "-(-10)")
@@ -2525,7 +2784,7 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
     
     # Calculate what the new quantity would be to check for natural flips
     # We need this to distinguish between natural flips and explicit opposite position opening
-    a = str(action).lower()
+    a = str(side).lower()
     qty = abs(q_in) if q_in < 0 else q_in
     
     if a == 'hold':
@@ -2537,38 +2796,13 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
     else:
         new_q_calc = old_q
     
-    # Validate: Cannot explicitly open a different direction type on the same ticker
-    # Natural direction flips through arithmetic are allowed
-    action_lower = str(action).lower()
-    direction_lower = str(direction).lower()
-    
-    # Check if this is a natural flip (quantity crosses zero through arithmetic)
-    is_natural_flip = (old_q > 0 and new_q_calc < 0) or (old_q < 0 and new_q_calc > 0)
-    
-    if old_q > 0:  # Currently have a long direction
-        # Error only if explicitly trying to open a short direction (not a natural flip)
-        if direction_lower == 'short' and action_lower == 'sell' and not is_natural_flip:
-            raise ValueError(
-                f"Cannot explicitly open a short direction on {ticker} while holding a long direction. "
-                f"Please close the long direction first (current quantity: {old_q}). "
-                f"Note: Natural direction flips (selling more than owned) are allowed."
-            )
-    
-    if old_q < 0:  # Currently have a short direction
-        # Error only if explicitly trying to open a long direction (not a natural flip)
-        if direction_lower == 'long' and action_lower == 'buy' and not is_natural_flip:
-            raise ValueError(
-                f"Cannot explicitly open a long direction on {ticker} while holding a short direction. "
-                f"Please close the short direction first (current quantity: {old_q}). "
-                f"Note: Natural direction flips (buying more than owed) are allowed."
-            )
 
     # Calculate cash and remaining
     cash = calculate_cash_single()
-    new_remaining = calculate_remaining_single(action, price, q_in, old_q, old_cb)
+    new_remaining = calculate_remaining_single(side, price, q_in, old_q, old_cb)
 
     # Update quantity and determine current position
-    new_q = calculate_current_quantity_single(ticker, action, q_in, old_q)
+    new_q = calculate_current_quantity_single(ticker, side, q_in, old_q)
     
     # Track position opening and closing for AHP / APS
     # Get current period (row number) - 1-indexed
@@ -2607,34 +2841,33 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
         update_average_holding_days(closed_positions)
     
     # Determine current direction based on new quantity
-    # When quantity is 0, retain the previous direction type (Long or Short)
-    # Formula: short if q < 0, long if q > 0, retain previous if q == 0
+    # Rule: if current quantity >= 0 → long, else → short
     if new_q < 0:
         current_direction = 'short'
-    elif new_q > 0:
+    else:
         current_direction = 'long'
-    else:  # new_q == 0
-        # Retain previous direction type when closing
-        if old_q > 0:
-            current_direction = 'long'  # Was long, now closed
-        elif old_q < 0:
-            current_direction = 'short'  # Was short, now closed
-        else:
-            current_direction = 'hold'  # No previous direction
-    
+
+    # Determine previous position based on quantity before trade (for realized PnL)
+    if old_q < 0:
+        prev_position = 'short'
+    elif old_q > 0:
+        prev_position = 'long'
+    else:
+        prev_position = 'hold'
+
     # Calculate realized PnL at point of time (independent calculation)
     realized_pnl_at_point = calculate_realized_pnl_at_point_of_time(
-        ticker, action, direction, price, q_in, old_q
+        ticker, side, prev_position, price, q_in, old_q
     )
     
     # Calculate cumulative realized PnL (updates global state)
     realized_pnl_cumulative = calculate_realized_pnl_cumulative(
-        ticker, action, direction, price, q_in, old_q
+        ticker, side, prev_position, price, q_in, old_q
     )
     
     # Calculate average price and cost basis
     avg_p, cb = calculate_avg_price_and_cost_basis_single(
-        ticker, action, price, q_in, old_q, new_q, old_cb  
+        ticker, side, price, q_in, old_q, new_q, old_cb  
     )
     # Calculate buyable/sellable shares
     # Formula: buyable_sellable = prev_remaining_cash / price
@@ -2672,7 +2905,7 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
     total_pv_equity = total_pv + new_remaining
     
     # Calculate Total PnL Overall
-    # Formula: total_pnl_overall = equity - initial_balance
+    # Formula: total_pnl_overall = equity - initial_cash
     total_pnl_overall = total_pv_equity - cash
     
     # Calculate Daily PnL = Today's Total PnL Overall - Yesterday's Total PnL Overall
@@ -2695,8 +2928,8 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
     else:
         daily_pct = None  # Avoid division by zero
     
-    # Calculate Cumulative % = ((Equity / Initial Balance) - 1) * 100
-    # Formula: cumulative_pct = ((equity / initial_balance) - 1) * 100
+    # Calculate Cumulative % = ((Equity / Initial Cash) - 1) * 100
+    # Formula: cumulative_pct = ((equity / initial_cash) - 1) * 100
     if cash > 0:
         cumulative_pct = ((total_pv_equity / cash) - 1) * 100
     else:
@@ -2704,13 +2937,40 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
 
     # Performance is the same as Cumulative %
     performance = cumulative_pct
+
+    # Sharpe Ratio based on cumulative realized PnL and per-trade realized PnL history
+    # risk_free_rate kept at 0.0 by default (can be changed by passing a different value)
+    sharpe_ratio = calculate_sharpe_ratio(
+        previous_df,
+        realized_pnl_at_point,
+        realized_pnl_cumulative,
+        cash,
+        risk_free_rate=0.0
+    )
+
+    # Sortino Ratio using downside deviation of negative PnL values
+    sortino_ratio = calculate_sortino_ratio(
+        previous_df,
+        realized_pnl_at_point,
+        realized_pnl_cumulative,
+        cash,
+        risk_free_rate=0.0
+    )
+
+    # Calmar Ratio using annualized account return and MDD
+    calmar_ratio = calculate_calmar_ratio(
+        previous_df,
+        total_pv_equity,
+        date,
+        cash
+    )
     
     # Calculate Number of Trades = Track trades per ticker
     # Get trade number for this ticker
-    trade_number = get_or_create_trade_number(ticker, old_q, new_q, action)
+    trade_number = get_or_create_trade_number(ticker, old_q, new_q, side)
     
     # Format trade string
-    trade_string = format_trade_string(action, current_direction, trade_number, new_q)
+    trade_string = format_trade_string(side, current_direction, trade_number, new_q)
 
     # Calculate Average Holding Days - only calculate when trade closes
     # Check if trade_string contains "- Close" to determine if this is a closing trade
@@ -2758,7 +3018,7 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
     )
 
     # Calculate Most Bought (only opening positions: LONG+BUY, SHORT+SELL)
-    most_bought = calculate_most_bought(previous_df, ticker, direction, action, q_in)
+    most_bought = calculate_most_bought(previous_df, ticker, current_direction, side, q_in)
     
     # Calculate Avg Losing PnL and Avg Winning PnL
     avg_losing_pnl, avg_winning_pnl = calculate_avg_losing_winning_pnl(
@@ -2787,7 +3047,7 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
         avg_gain = None  # No trades opened yet
     
     # Update historical maximum investment
-    update_max_investment_history(ticker, price, q_in, action, old_q)
+    update_max_investment_history(ticker, price, q_in, side, old_q)
     
     # Calculate Biggest Investment
     biggest_investment = calculate_biggest_investment()
@@ -2798,7 +3058,7 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
     holdings = calculate_holdings()
 
     # Update historical traded volume 
-    update_traded_volume_history(price, q_in, action)
+    update_traded_volume_history(price, q_in, side)
 
     # Calculate Highest/Lowest Traded Volume
     highest_traded_volume = get_highest_traded_volume()
@@ -2816,15 +3076,15 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
     asset_count = calculate_asset_count()
     
     # Increment Investment Count when opening a direction:
-    # - Long direction: when action='buy' and direction='long'
-    # - Short direction: when action='sell' and direction='short'
+    # - Long direction: when side='buy' and direction='long'
+    # - Short direction: when side='sell' and direction='short'
     global investment_count
-    action_lower = str(action).lower()
-    direction_lower = str(direction).lower()
+    side_lower = str(side).lower()
+    direction_lower = str(current_direction).lower()
     
     # If Opening a Direction (increments investment_count)
-    if (direction_lower == 'long' and action_lower == 'buy') or \
-        (direction_lower == 'short' and action_lower == 'sell'):
+    if (direction_lower == 'long' and side_lower == 'buy') or \
+        (direction_lower == 'short' and side_lower == 'sell'):
         investment_count += 1
     
     # Calculate Investment Count
@@ -2858,9 +3118,8 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
         'Date': date,
         'Ticker': ticker,
         'Asset Type': (inferred_asset_type or asset_type or '').capitalize(),
-        'Side': action.capitalize(),
-        'Direction': direction.capitalize(),
-        'Current Direction': current_direction.capitalize(),
+        'Side': side.capitalize(),
+        'Direction': current_direction.capitalize(),
         'Initial Balance': cash,
         'Buyable/Sellable': buyable_sellable,
         'Quantity Buy': q_in,
@@ -2875,6 +3134,8 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
         'Pnl Unrealized':open_unrealized_pnl,
         'PnL Unrealized Total Value for Current Ticker': total_current_ticker_unrealized,
         'PnL realized Total Value for Current Ticker': realized_pnl_total_current_ticker,
+        'PnL Realized at Point of Time': realized_pnl_at_point,
+        'PnL Unrealized at Point of Time': total_unrealized_all_tickers,
         'Equity (Long)': pv_long_current,
         'Equity (Short)': pv_short_current,
         'Open Position': open_pos,
@@ -2893,6 +3154,9 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
         'Cumulative %': cumulative_pct,
         'Investment Count': investment_count_value,
         'Performance': performance,
+        'Sharpe Ratio': sharpe_ratio,
+        'Sortino Ratio': sortino_ratio,
+        'Calmar Ratio': calmar_ratio,
         'Asset Count': asset_count,
         'Trade No. (Position - Trade no. - Current Quantity)': trade_string,
         'Total Trades': total_trades_str,
@@ -2939,7 +3203,7 @@ def process_trade(ticker, asset_type, action, direction, price, quantity_buy, da
     return row
 
     
-def add_trade(ticker, asset_type=None, action='buy', direction='long', price=0.0, quantity_buy=0.0, date=None, take_profit_pct=0.20, stop_loss_pct=0.10):
+def add_trade(ticker, asset_type=None, side='buy', price=0.0, quantity_buy=0.0, date=None, take_profit_pct=0.20, stop_loss_pct=0.10):
     """
     Add a trade to the portfolio and return the updated DataFrame.
     
@@ -2947,8 +3211,8 @@ def add_trade(ticker, asset_type=None, action='buy', direction='long', price=0.0
     
     Args:
         ticker (str): Ticker symbol
-        asset_type (str, optional): Asset type (e.g., 'Stock', 'Crypto', 'ETF'). If None, will be inferred.
-        action (str): Trade action ('buy', 'sell', 'hold')
+        asset_type (str): Asset type (e.g., 'Stock', 'Crypto', 'ETF')
+        side (str): Trade side ('buy', 'sell', 'hold')
         direction (str): Direction type ('long', 'short', 'hold')
         price (float): Trade price
         quantity_buy (float or str): Quantity to trade
@@ -2959,7 +3223,7 @@ def add_trade(ticker, asset_type=None, action='buy', direction='long', price=0.0
     Returns:
         pd.DataFrame: Updated portfolio DataFrame with all trades
     """
-    process_trade(ticker, asset_type, action, direction, price, quantity_buy, date, take_profit_pct, stop_loss_pct)
+    process_trade(ticker, asset_type, side, price, quantity_buy, date, take_profit_pct, stop_loss_pct)
     return get_portfolio_df()
 
 # ---------- Formulas ----------
@@ -2975,9 +3239,8 @@ def get_formulas_dict():
         'Date': 'Trade Date',
         'Ticker': 'Ticker Symbol',
         'Asset Type': 'Asset Type (Equity, Crypto, etc.)',
-        'Side': 'Trade Action (Buy, Sell, Hold)',
-        'Direction': 'Direction Type Specified (Long, Short, Hold)',
-        'Current Direction': 'Current Direction: Long if Qty>0, Short if Qty<0, Retain Previous if Qty=0',
+        'Side': 'Trade side (Buy, Sell, Hold)',
+        'Direction': 'Derived Direction: Long if Qty>=0, Short if Qty<0',
         'Initial Balance': 'Initial Balance (Constant)',
         'Buyable/Sellable': 'Previous Available Balance / Price',
         'Quantity Buy': 'Quantity Traded (Absolute Value)',
@@ -2992,6 +3255,8 @@ def get_formulas_dict():
         'Pnl Unrealized': 'Long + Short for Current Ticker',
         'PnL Unrealized Total Value for Current Ticker': 'Long + Short Unrealized PnL',
         'PnL realized Total Value for Current Ticker': 'Sum of PnL Realized at Point of Time for this ticker up to current row',
+        'PnL Realized at Point of Time': 'Realized PnL for this specific closing trade (portfolio-level, irrespective of ticker)',
+        'PnL Unrealized at Point of Time': 'Sum of Unrealized PnL across ALL tickers at this point in time (portfolio-level, irrespective of ticker)',
         'PV (Long)': 'Cost Basis + (Price - Avg Price) * Qty',
         'PV (Short)': 'Cost Basis + (Avg Price - Price) * |Qty|',
         'Open Position': 'String of All Open Positions',
@@ -3010,6 +3275,8 @@ def get_formulas_dict():
         'Cumulative %': '((Equity / Initial Balance) - 1) * 100',
         'Investment Count': 'Cumulative Count of Positions Opened',
         'Performance': 'Same as Cumulative %',
+        'Sharpe Ratio': 'Sharpe = ((Realized PnL at Point of Time (Portfolio) / Initial Balance) - Risk Free Rate) / StdDev(PnL Realized at Point of Time)',
+        'Sortino Ratio': 'Sortino = ((Realized PnL at Point of Time (Portfolio) / Initial Balance) - Risk Free Rate) / DownsideDeviation(negative PnL Realized at Point of Time)',
         'Asset Count': 'Count of Distinct Tickers per Asset Type where Qty≠0',
         'Trade No. (Position - Trade no. - Current Quantity)': 'Formatted Trade String',
         'Total Trades': 'Max Trade Number Assigned',
@@ -3091,10 +3358,6 @@ def get_portfolio_df_with_formulas():
     df = get_portfolio_df()
     return add_formulas_row_to_df(df)
 
-
-
-
-
 def generate_trades(csv_file, portfolio_type='simple'):
     """
     Generate trade code from CSV.
@@ -3113,11 +3376,6 @@ def generate_trades(csv_file, portfolio_type='simple'):
         side = str(row['side']).lower()
         price = float(row['price'])
         qty = abs(float(row['quantity']))
-        # Direction column (if present) otherwise infer from side
-        if 'direction' in df.columns:
-            direction = str(row['direction']).lower()
-        else:
-            direction = 'short' if side == 'sell' else 'long'
         # Optional date column; normalize if present
         trade_date = None
         if 'date' in df.columns:
@@ -3125,14 +3383,14 @@ def generate_trades(csv_file, portfolio_type='simple'):
         
         if portfolio_type == 'simple':
             if trade_date is not None:
-                print(f"add_trade(ticker='{ticker}', action='{side}', direction='{direction}', price={price}, quantity_buy={qty}, date='{trade_date}')")
+                print(f"add_trade(ticker='{ticker}', side='{side}', price={price}, quantity_buy={qty}, date='{trade_date}')")
             else:
-                print(f"add_trade(ticker='{ticker}', action='{side}', direction='{direction}', price={price}, quantity_buy={qty})")
+                print(f"add_trade(ticker='{ticker}', side='{side}', price={price}, quantity_buy={qty})")
         else:  # full
             if trade_date is not None:
-                print(f"add_trade(ticker='{ticker}', asset_type='Equity', action='{side}', direction='{direction}', price={price}, quantity_buy={qty}, date='{trade_date}')")
+                print(f"add_trade(ticker='{ticker}', asset_type='Equity', side='{side}', price={price}, quantity_buy={qty}, date='{trade_date}')")
             else:
-                print(f"add_trade(ticker='{ticker}', asset_type='Equity', action='{side}', direction='{direction}', price={price}, quantity_buy={qty})")
+                print(f"add_trade(ticker='{ticker}', asset_type='Equity', side='{side}', price={price}, quantity_buy={qty})")
     
     print("\n# Display")
     print("df = get_portfolio_df()")
@@ -3278,8 +3536,7 @@ def _run_portfolio_on_dataframe(
         add_trade(
             ticker=ticker,
             asset_type=None,
-            action=side_raw,
-            direction=direction,
+            side=side_raw,
             price=price,
             quantity_buy=qty,
             date=trade_date,
