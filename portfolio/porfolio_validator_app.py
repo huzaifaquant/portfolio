@@ -3361,7 +3361,7 @@ def get_portfolio_df_with_formulas():
 def generate_trades(csv_file, portfolio_type='simple'):
     """
     Generate trade code from CSV.
-
+    
     Args:
         csv_file: Path to CSV file. It must have:
             - one of: ticker, symbol, tvId, tv_Id
@@ -3394,10 +3394,10 @@ def generate_trades(csv_file, portfolio_type='simple'):
     price_col    = get_col(["price"], label="price")
     quantity_col = get_col(["quantity"], label="quantity")
     date_col     = get_col(["date", "cts", "mts"], required=False, label="date")
-
+    
     print("# Reset portfolio")
     print("reset_portfolio()\n")
-
+    
     for _, row in df.iterrows():
         ticker = str(row[ticker_col]).lower()
         side   = str(row[side_col]).lower()
@@ -3406,7 +3406,7 @@ def generate_trades(csv_file, portfolio_type='simple'):
 
         # Optional date column; normalize if present
         trade_date = normalize_trade_date(row[date_col]) if date_col is not None else None
-
+        
         if portfolio_type == 'simple':
             if trade_date is not None:
                 print(
@@ -3429,7 +3429,7 @@ def generate_trades(csv_file, portfolio_type='simple'):
                     f"add_trade(ticker='{ticker}', asset_type='Equity', side='{side}', "
                     f"price={price}, quantity_buy={qty})"
                 )
-
+    
     print("\n# Display")
     print("df = get_portfolio_df()")
     print("df")
@@ -3539,17 +3539,17 @@ HTML_TEMPLATE = """
                   accept=".csv"
                   required
                 />
-              </div>
-              <div class="col-md-3 col-lg-2">
+        </div>
+        <div class="col-md-3 col-lg-2">
                 <label for="initial_cash" class="form-label text-light">Initial Balance</label>
-                <input
+          <input
                   type="text"
-                  class="form-control"
-                  id="initial_cash"
-                  name="initial_cash"
-                  value="{{ initial_cash }}"
-                />
-              </div>
+            class="form-control"
+            id="initial_cash"
+            name="initial_cash"
+            value="{{ initial_cash }}"
+          />
+        </div>
               <div class="col-md-3 col-lg-2">
                 <label class="form-label text-light d-block">&nbsp;</label>
                 <button class="btn btn-primary w-100" type="submit">
@@ -3561,8 +3561,8 @@ HTML_TEMPLATE = """
                   Required (case-insensitive): ticker/symbol/tvId/tv_Id, side, price, quantity.
                   Optional: date/cts/mts.
                 </div>
-              </div>
-            </form>
+        </div>
+      </form>
           </div>
         </div>
       </section>
@@ -3570,8 +3570,8 @@ HTML_TEMPLATE = """
       {% if error %}
         <section class="mb-3">
           <div class="alert alert-danger shadow-sm mb-0" role="alert">
-            {{ error }}
-          </div>
+          {{ error }}
+        </div>
         </section>
       {% endif %}
 
@@ -3586,12 +3586,12 @@ HTML_TEMPLATE = """
                 <small class="subtitle">Sortable, searchable trade and metric table</small>
               </div>
               <a href="{{ url_for('download_csv') }}" class="btn btn-outline-light btn-sm">
-                Download CSV
-              </a>
-            </div>
+            Download CSV
+          </a>
+        </div>
             <div class="table-wrapper p-3">
-              {{ df_html | safe }}
-            </div>
+          {{ df_html | safe }}
+        </div>
           </div>
         </section>
       {% endif %}
@@ -3646,13 +3646,10 @@ HTML_TEMPLATE = """
           }
 
           for (let i = 0; i < max; i++) {
-            // Column layout with index visible is:
-            // 0: Index, 1: Date, 2: Ticker, 3: Side, 4: Direction,
-            // 5: Quantity Buy, 6: Asset Type, ...
-            // We want Asset Type to scroll (not fixed), so skip i === 6.
-            if (i === 6) continue;
-
-            const selector = `#${tableEl.id} thead th:nth-child(${i + 1}), #${tableEl.id} tbody td:nth-child(${i + 1})`;
+            // Column layout with index visible is currently:
+            // 0: Index, 1: Date, 2: Ticker, 3: Side, 4: Quantity Buy, 5: Price, 6: Direction, 7: Asset Type, ...
+            // We want the first 6 (Index through Price) to stay fixed; everything from Direction onwards scrolls.
+            const selector = `#${tableEl.id} thead th:nth-child(${i + 1}), #${tableEl.id} tbody td:nth-child(${i + 1}), #${tableEl.id} tbody th:nth-child(${i + 1})`;
             tableEl.querySelectorAll(selector).forEach((cell) => {
               cell.style.position = 'sticky';
               cell.style.left = leftOffsets[i] + 'px';
