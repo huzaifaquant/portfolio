@@ -3483,7 +3483,8 @@ HTML_TEMPLATE = """
       }
       .table-wrapper {
         max-height: 70vh;
-        overflow: auto;
+        overflow-x: auto;
+        overflow-y: auto;
         border-radius: 0.75rem;
         background: #020617;
       }
@@ -3496,6 +3497,12 @@ HTML_TEMPLATE = """
       table.dataTable tbody tr:hover {
         background-color: #0b1120;
       }
+      table.dataTable thead th,
+      table.dataTable tbody td {
+        padding: 0.3rem 0.5rem;
+        font-size: 0.8rem;
+        white-space: nowrap;
+      }
       .form-text {
         color: #9ca3af;
       }
@@ -3505,7 +3512,7 @@ HTML_TEMPLATE = """
     <div class="app-shell">
       <header class="mb-4 text-center">
         <h1 class="hero-title display-6 fw-semibold text-light mb-2">
-          Portfolio Backtester
+          Portfolio Validator
         </h1>
         <p class="subtitle mb-0">
           Upload a trades CSV and explore full portfolio metrics, PnL, and risk in one view.
@@ -3526,10 +3533,6 @@ HTML_TEMPLATE = """
                   accept=".csv"
                   required
                 />
-                <div class="form-text mt-1">
-                  Required (case-insensitive): ticker/symbol/tvId/tv_Id, side, price, quantity.
-                  Optional: date/cts/mts.
-                </div>
               </div>
               <div class="col-md-3 col-lg-2">
                 <label for="initial_cash" class="form-label text-light">Initial Balance</label>
@@ -3547,6 +3550,12 @@ HTML_TEMPLATE = """
                 <button class="btn btn-primary w-100" type="submit">
                   Run Portfolio
                 </button>
+              </div>
+              <div class="col-12">
+                <div class="form-text mt-1">
+                  Required (case-insensitive): ticker/symbol/tvId/tv_Id, side, price, quantity.
+                  Optional: date/cts/mts.
+                </div>
               </div>
             </form>
           </div>
@@ -3592,12 +3601,11 @@ HTML_TEMPLATE = """
         const table = document.getElementById('results-table');
         if (table) {
           new DataTable(table, {
-            paging: true,
-            pageLength: 25,
-            lengthMenu: [10, 25, 50, 100],
+            paging: false,   // show all rows on a single page
+            info: false,     // hide "showing X of Y" text
             ordering: true,
             searching: true,
-            scrollX: true,
+            scrollX: true
           });
         }
       });
@@ -3668,7 +3676,6 @@ def _run_portfolio_on_dataframe(
         )
 
     # Store last result for CSV export
-    global last_result_df
     last_result_df = get_portfolio_df()
     return last_result_df
 
