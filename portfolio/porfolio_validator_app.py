@@ -3482,19 +3482,15 @@ HTML_TEMPLATE = """
         color: #9ca3af;
       }
       .table-wrapper {
-        max-height: 70vh;
-        overflow-x: auto;
-        overflow-y: auto;
-        border-radius: 0.75rem;
-        background: #020617;
-      }
-      .table-wrapper {
         position: relative;
         max-height: 70vh;
         overflow-x: auto;
         overflow-y: auto;
         border-radius: 0.75rem;
         background: #020617;
+      }
+      .table-wrapper table {
+        margin: 0 !important; /* keep first column flush to the left when scrolling */
       }
       table.dataTable thead th {
         position: sticky !important;
@@ -3634,6 +3630,31 @@ HTML_TEMPLATE = """
           });
         }
 
+        // Helper to freeze first N columns horizontally while allowing sideways scroll
+        function freezeColumns(tableEl, count) {
+          if (!tableEl || !tableEl.tHead) return;
+          const headerCells = tableEl.tHead.rows[0].cells;
+          const max = Math.min(count, headerCells.length);
+
+          // Compute left offsets based on rendered widths
+          const leftOffsets = [];
+          let left = 0;
+          for (let i = 0; i < max; i++) {
+            leftOffsets[i] = left;
+            left += headerCells[i].offsetWidth;
+          }
+
+          for (let i = 0; i < max; i++) {
+            const selector = `#${tableEl.id} thead th:nth-child(${i + 1}), #${tableEl.id} tbody td:nth-child(${i + 1})`;
+            tableEl.querySelectorAll(selector).forEach((cell) => {
+              cell.style.position = 'sticky';
+              cell.style.left = leftOffsets[i] + 'px';
+              // Do NOT override background so color stays consistent with other cells
+              cell.style.zIndex = cell.tagName === 'TH' ? 6 : 4;
+            });
+          }
+        }
+
         const table = document.getElementById('results-table');
         if (table) {
           new DataTable(table, {
@@ -3642,6 +3663,9 @@ HTML_TEMPLATE = """
             ordering: true,
             searching: true
           });
+
+          // Freeze the first 6 columns: Date, Ticker, Asset Type, Side, Direction, Quantity Buy
+          freezeColumns(table, 6);
         }
       });
     </script>
