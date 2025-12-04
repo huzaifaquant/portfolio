@@ -31,8 +31,8 @@ next_trade_number = 1  # Global counter for next new trade
 investment_count = 0  # Cumulative count of positions opened (long buy or short sell)
 
 COLUMNS = [
-    'Date','Ticker','Side','Direction','Quantity Buy','Asset Type','Initial Balance','Buyable/Sellable',
-    'Available Balance','Current Quantity','Price',
+    'Date','Ticker','Side','Quantity Buy','Price','Direction','Asset Type','Initial Balance','Buyable/Sellable',
+    'Available Balance','Current Quantity',
     'Avg Price','Cost Basis','Equity',
     'PnL (Long) Unrealized','PnL (Short) Unrealized','Pnl Unrealized','PnL Unrealized Total Value for Current Ticker','PnL realized Total Value for Current Ticker',
     'PnL Realized at Point of Time','PnL Unrealized at Point of Time',
