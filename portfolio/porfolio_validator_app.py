@@ -3361,37 +3361,75 @@ def get_portfolio_df_with_formulas():
 def generate_trades(csv_file, portfolio_type='simple'):
     """
     Generate trade code from CSV.
-    
+
     Args:
-        csv_file: Path to CSV file (must have: symbol, side, price, quantity columns; optional: date)
+        csv_file: Path to CSV file. It must have:
+            - one of: ticker, symbol, tvId, tv_Id
+            - side, price, quantity columns
+            - optional date/cts/mts column for trade date
         portfolio_type: 'simple' or 'full'
     """
     df = pd.read_csv(csv_file)
-    
+
+    # Build case-insensitive column lookup
+    cols = {str(c).lower(): c for c in df.columns}
+
+    def get_col(candidates, required=True, label=None):
+        """Return the first matching column name from candidates (case-insensitive)."""
+        label = label or candidates
+        for cand in candidates:
+            key = str(cand).lower()
+            if key in cols:
+                return cols[key]
+        if required:
+            raise ValueError(
+                f"CSV must contain column(s) {candidates} for {label} (case-insensitive). "
+                f"Found columns: {list(df.columns)}"
+            )
+        return None
+
+    # Core columns
+    ticker_col   = get_col(["ticker", "symbol", "tvid", "tv_id"], label="ticker")
+    side_col     = get_col(["side"], label="side")
+    price_col    = get_col(["price"], label="price")
+    quantity_col = get_col(["quantity"], label="quantity")
+    date_col     = get_col(["date", "cts", "mts"], required=False, label="date")
+
     print("# Reset portfolio")
     print("reset_portfolio()\n")
-    
+
     for _, row in df.iterrows():
-        ticker = str(row['symbol']).lower()
-        side = str(row['side']).lower()
-        price = float(row['price'])
-        qty = abs(float(row['quantity']))
+        ticker = str(row[ticker_col]).lower()
+        side   = str(row[side_col]).lower()
+        price  = float(row[price_col])
+        qty    = abs(float(row[quantity_col]))
+
         # Optional date column; normalize if present
-        trade_date = None
-        if 'date' in df.columns:
-            trade_date = normalize_trade_date(row['date'])
-        
+        trade_date = normalize_trade_date(row[date_col]) if date_col is not None else None
+
         if portfolio_type == 'simple':
             if trade_date is not None:
-                print(f"add_trade(ticker='{ticker}', side='{side}', price={price}, quantity_buy={qty}, date='{trade_date}')")
+                print(
+                    f"add_trade(ticker='{ticker}', side='{side}', "
+                    f"price={price}, quantity_buy={qty}, date='{trade_date}')"
+                )
             else:
-                print(f"add_trade(ticker='{ticker}', side='{side}', price={price}, quantity_buy={qty})")
+                print(
+                    f"add_trade(ticker='{ticker}', side='{side}', "
+                    f"price={price}, quantity_buy={qty})"
+                )
         else:  # full
             if trade_date is not None:
-                print(f"add_trade(ticker='{ticker}', asset_type='Equity', side='{side}', price={price}, quantity_buy={qty}, date='{trade_date}')")
+                print(
+                    f"add_trade(ticker='{ticker}', asset_type='Equity', side='{side}', "
+                    f"price={price}, quantity_buy={qty}, date='{trade_date}')"
+                )
             else:
-                print(f"add_trade(ticker='{ticker}', asset_type='Equity', side='{side}', price={price}, quantity_buy={qty})")
-    
+                print(
+                    f"add_trade(ticker='{ticker}', asset_type='Equity', side='{side}', "
+                    f"price={price}, quantity_buy={qty})"
+                )
+
     print("\n# Display")
     print("df = get_portfolio_df()")
     print("df")
