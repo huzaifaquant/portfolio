@@ -31,7 +31,7 @@ next_trade_number = 1  # Global counter for next new trade
 investment_count = 0  # Cumulative count of positions opened (long buy or short sell)
 
 COLUMNS = [
-    'Date','Ticker', 'Asset Type','Side','Direction','Quantity Buy','Initial Balance','Buyable/Sellable',
+    'Date','Ticker','Side','Direction','Quantity Buy','Asset Type','Initial Balance','Buyable/Sellable',
     'Available Balance','Current Quantity','Price',
     'Avg Price','Cost Basis','Equity',
     'PnL (Long) Unrealized','PnL (Short) Unrealized','Pnl Unrealized','PnL Unrealized Total Value for Current Ticker','PnL realized Total Value for Current Ticker',
@@ -3646,6 +3646,12 @@ HTML_TEMPLATE = """
           }
 
           for (let i = 0; i < max; i++) {
+            // Column layout with index visible is:
+            // 0: Index, 1: Date, 2: Ticker, 3: Side, 4: Direction,
+            // 5: Quantity Buy, 6: Asset Type, ...
+            // We want Asset Type to scroll (not fixed), so skip i === 6.
+            if (i === 6) continue;
+
             const selector = `#${tableEl.id} thead th:nth-child(${i + 1}), #${tableEl.id} tbody td:nth-child(${i + 1})`;
             tableEl.querySelectorAll(selector).forEach((cell) => {
               cell.style.position = 'sticky';
@@ -3675,7 +3681,7 @@ HTML_TEMPLATE = """
             searching: true
           });
 
-          // Freeze first 7 visual columns (index + Date, Ticker, Asset Type, Side, Direction, Quantity Buy)
+          // Freeze first 7 visible columns: Index, Date, Ticker, Asset Type, Side, Direction, Quantity Buy
           freezeColumns(table, 7);
         }
       });
