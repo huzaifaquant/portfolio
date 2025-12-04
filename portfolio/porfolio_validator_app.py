@@ -3730,7 +3730,9 @@ def _run_portfolio_on_dataframe(
     for _, row in trades.iterrows():
         ticker = str(row[ticker_col]).upper()
         side_raw = str(row[side_col]).strip().lower()
-        if side_raw not in {"buy", "sell"}:
+
+        # Allow 'buy', 'sell', and 'hold'. Skip anything else as invalid.
+        if side_raw not in {"buy", "sell", "hold"}:
             continue
 
         price = float(row[price_col])
