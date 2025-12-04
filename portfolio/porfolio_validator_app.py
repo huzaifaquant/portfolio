@@ -3537,8 +3537,7 @@ HTML_TEMPLATE = """
               <div class="col-md-3 col-lg-2">
                 <label for="initial_cash" class="form-label text-light">Initial Balance</label>
                 <input
-                  type="number"
-                  step="0.01"
+                  type="text"
                   class="form-control"
                   id="initial_cash"
                   name="initial_cash"
@@ -3598,6 +3597,27 @@ HTML_TEMPLATE = """
     <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
     <script>
       document.addEventListener('DOMContentLoaded', function () {
+        // Auto-format initial balance with commas for readability
+        const cashInput = document.getElementById('initial_cash');
+        if (cashInput) {
+          const formatNumber = (val) => {
+            if (!val) return '';
+            const num = Number(String(val).replace(/,/g, ''));
+            if (Number.isNaN(num)) return val;
+            return num.toLocaleString('en-US');
+          };
+
+          cashInput.addEventListener('focus', function () {
+            // Remove commas when user starts editing
+            this.value = this.value.replace(/,/g, '');
+          });
+
+          cashInput.addEventListener('blur', function () {
+            // Apply formatting when user leaves the field
+            this.value = formatNumber(this.value);
+          });
+        }
+
         const table = document.getElementById('results-table');
         if (table) {
           new DataTable(table, {
@@ -3692,7 +3712,9 @@ def index():
         initial_cash_raw = request.form.get("initial_cash", "").strip()
 
         try:
-            initial_cash = float(initial_cash_raw) if initial_cash_raw else default_initial_cash
+            # Strip commas for numeric parsing (allows inputs like "10,000")
+            cleaned = initial_cash_raw.replace(",", "")
+            initial_cash = float(cleaned) if cleaned else default_initial_cash
         except ValueError:
             initial_cash = default_initial_cash
 
