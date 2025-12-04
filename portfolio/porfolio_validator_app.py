@@ -3678,8 +3678,9 @@ HTML_TEMPLATE = """
             searching: true
           });
 
-          // Freeze first 7 visible columns: Index, Date, Ticker, Asset Type, Side, Direction, Quantity Buy
-          freezeColumns(table, 7);
+          // Freeze first 6 visible columns: Index, Date, Ticker, Side, Quantity Buy, Price
+          // Direction and all columns after it will scroll horizontally.
+          freezeColumns(table, 6);
         }
       });
     </script>
