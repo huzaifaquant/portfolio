@@ -3509,6 +3509,20 @@ HTML_TEMPLATE = """
         font-size: 0.8rem;
         white-space: nowrap;
       }
+      /* Make the moved DataTables search label sit nicely above the input */
+      .card-glass-header .dataTables_filter label {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+        margin: 0;
+        color: #e5e7eb;
+        font-size: 0.8rem;
+        text-align: left !important;
+      }
+      .card-glass-header .dataTables_filter input[type="search"] {
+        width: 220px;
+      }
       .form-text {
         color: #9ca3af;
       }
@@ -3585,13 +3599,16 @@ HTML_TEMPLATE = """
                 <h2 class="h5 mb-0 text-light">Portfolio Results</h2>
                 <small class="subtitle">Sortable, searchable trade and metric table</small>
               </div>
+              <!-- DataTables search box will be moved into this header via JS -->
+            </div>
+            <div class="d-flex justify-content-end px-4 pt-2 pb-2">
               <a href="{{ url_for('download_csv') }}" class="btn btn-outline-light btn-sm">
-            Download CSV
-          </a>
-        </div>
+                Download CSV
+              </a>
+            </div>
             <div class="table-wrapper p-3">
-          {{ df_html | safe }}
-        </div>
+              {{ df_html | safe }}
+            </div>
           </div>
         </section>
       {% endif %}
@@ -3671,12 +3688,36 @@ HTML_TEMPLATE = """
 
         const table = document.getElementById('results-table');
         if (table) {
-          new DataTable(table, {
+          const dt = new DataTable(table, {
             paging: false,   // show all rows on a single page
             info: false,     // hide "showing X of Y" text
             ordering: true,
             searching: true
           });
+
+          // Move the DataTables search bar out of the horizontal scroll area
+          const wrapper = table.closest('.dataTables_wrapper');
+          if (wrapper) {
+            const filter = wrapper.querySelector('.dataTables_filter');
+            const lengthCtrl = wrapper.querySelector('.dataTables_length');
+            if (lengthCtrl) {
+              lengthCtrl.style.display = 'none';
+            }
+            if (filter) {
+              const header = document.querySelector('.card-glass-header');
+              if (header) {
+                header.appendChild(filter);
+                const label = filter.querySelector('label');
+                const input = filter.querySelector('input');
+                if (label) {
+                  label.classList.add('mb-0', 'text-light');
+                }
+                if (input) {
+                  input.classList.add('form-control', 'form-control-sm', 'bg-dark', 'text-light');
+                }
+              }
+            }
+          }
 
           // Freeze first 6 visible columns: Index, Date, Ticker, Side, Quantity Buy, Price
           // Direction and all columns after it will scroll horizontally.
