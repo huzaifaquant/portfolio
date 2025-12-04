@@ -3597,24 +3597,31 @@ HTML_TEMPLATE = """
     <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
     <script>
       document.addEventListener('DOMContentLoaded', function () {
-        // Auto-format initial balance with commas for readability
+        // Live format initial balance with commas while typing
         const cashInput = document.getElementById('initial_cash');
         if (cashInput) {
-          const formatNumber = (val) => {
-            if (!val) return '';
-            const num = Number(String(val).replace(/,/g, ''));
-            if (Number.isNaN(num)) return val;
-            return num.toLocaleString('en-US');
+          const formatWithCommas = (val) => {
+            if (val === '' || val === null || val === undefined) return '';
+            const str = String(val).replace(/,/g, '');
+            if (!str) return '';
+            const parts = str.split('.');
+            const intPart = parts[0].replace(/[^0-9-]/g, '');
+            const decPart = parts[1] ? parts[1].replace(/[^0-9]/g, '') : '';
+            if (!intPart) return decPart ? '0.' + decPart : '';
+            const intNum = Number(intPart);
+            if (Number.isNaN(intNum)) return val;
+            const formattedInt = intNum.toLocaleString('en-US');
+            return decPart ? formattedInt + '.' + decPart : formattedInt;
           };
 
-          cashInput.addEventListener('focus', function () {
-            // Remove commas when user starts editing
-            this.value = this.value.replace(/,/g, '');
-          });
-
-          cashInput.addEventListener('blur', function () {
-            // Apply formatting when user leaves the field
-            this.value = formatNumber(this.value);
+          cashInput.addEventListener('input', function (e) {
+            const cursorPos = this.selectionStart;
+            const before = this.value.slice(0, cursorPos);
+            const formattedBefore = formatWithCommas(before);
+            const formattedFull = formatWithCommas(this.value);
+            this.value = formattedFull;
+            // Simple caret reposition: put it at end for now (good enough UX)
+            this.selectionStart = this.selectionEnd = this.value.length;
           });
         }
 
