@@ -3472,7 +3472,7 @@ HTML_TEMPLATE = """
           <label for="csv_file" class="form-label">Trades CSV</label>
           <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required />
           <div class="form-text">
-            Required columns (case-insensitive): symbol, side, price, quantity. Optional: date, direction.
+            Required columns (case-insensitive): ticker/symbol/tvId/tv_Id, side, price, quantity. Optional: date/cts/mts.
           </div>
         </div>
         <div class="col-md-3 col-lg-2">
@@ -3540,35 +3540,49 @@ def _run_portfolio_on_dataframe(
 ) -> pd.DataFrame:
     """
     Core driver: given a trades DataFrame, feed it into the portfolio engine.
+    Column detection is case-insensitive and supports multiple aliases:
+      - ticker: one of ticker/symbol/tvId/tv_Id
+      - date: one of date/cts/mts (optional)
     """
-    # Normalise column name mapping (case-insensitive)
-    lower_map = {c.lower(): c for c in trades.columns}
-    required = {"symbol", "side", "price", "quantity"}
-    missing = required - set(lower_map.keys())
-    if missing:
-        raise ValueError(f"Missing required columns: {', '.join(sorted(missing))}")
+    # Build case-insensitive column lookup
+    cols = {str(c).lower(): c for c in trades.columns}
+
+    def get_col(candidates, required: bool = True, label: Optional[str] = None):
+        """Return the first matching column name from candidates (case-insensitive)."""
+        label = label or ",".join(candidates)
+        for cand in candidates:
+            key = str(cand).lower()
+            if key in cols:
+                return cols[key]
+        if required:
+            raise ValueError(
+                f"CSV must contain column(s) {candidates} for {label} (case-insensitive). "
+                f"Found columns: {list(trades.columns)}"
+            )
+        return None
+
+    # Core columns
+    ticker_col = get_col(["ticker", "symbol", "tvid", "tv_id"], label="ticker")
+    side_col = get_col(["side"], label="side")
+    price_col = get_col(["price"], label="price")
+    quantity_col = get_col(["quantity"], label="quantity")
+    date_col = get_col(["date", "cts", "mts"], required=False, label="date")
 
     reset_portfolio(initial_cash)
 
     for _, row in trades.iterrows():
-        ticker = str(row[lower_map["symbol"]]).upper()
-        side_raw = str(row[lower_map["side"]]).strip().lower()
+        ticker = str(row[ticker_col]).upper()
+        side_raw = str(row[side_col]).strip().lower()
         if side_raw not in {"buy", "sell"}:
             continue
 
-        price = float(row[lower_map["price"]])
-        qty = float(row[lower_map["quantity"]])
-
-        # Direction column (if present) otherwise infer from side
-        if "direction" in lower_map:
-            direction = str(row[lower_map["direction"]]).strip().lower()
-        else:
-            direction = "short" if side_raw == "sell" else "long"
+        price = float(row[price_col])
+        qty = float(row[quantity_col])
 
         # Optional date column (case-insensitive) – normalize to one format
         trade_date = None
-        if "date" in lower_map:
-            trade_date = normalize_trade_date(row[lower_map["date"]])
+        if date_col is not None:
+            trade_date = normalize_trade_date(row[date_col])
 
         # Let engine infer asset_type from ASSET_TYPE_MAP if None
         add_trade(
