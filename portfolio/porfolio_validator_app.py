@@ -3488,9 +3488,10 @@ HTML_TEMPLATE = """
         overflow-y: auto;
         border-radius: 0.75rem;
         background: #020617;
+        padding: 0 !important; /* remove inner padding so nothing sits to the left of frozen cols */
       }
       .table-wrapper table {
-        margin: 0 !important; /* keep first column flush to the left when scrolling */
+        margin: 0 !important;
       }
       table.dataTable thead th {
         position: sticky !important;
@@ -3649,7 +3650,11 @@ HTML_TEMPLATE = """
             tableEl.querySelectorAll(selector).forEach((cell) => {
               cell.style.position = 'sticky';
               cell.style.left = leftOffsets[i] + 'px';
-              // Do NOT override background so color stays consistent with other cells
+              // Slight elevation for frozen columns so they \"hover\" above the scrolling area
+              if (cell.tagName === 'TH' || cell.tagName === 'TD') {
+                cell.style.boxShadow = '2px 0 6px rgba(15, 23, 42, 0.85)';
+              }
+              // Keep background controlled by table styles so colors stay consistent
               cell.style.zIndex = cell.tagName === 'TH' ? 6 : 4;
             });
           }
@@ -3664,8 +3669,8 @@ HTML_TEMPLATE = """
             searching: true
           });
 
-          // Freeze the first 6 columns: Date, Ticker, Asset Type, Side, Direction, Quantity Buy
-          freezeColumns(table, 6);
+          // Freeze first 7 visual columns (index + Date, Ticker, Asset Type, Side, Direction, Quantity Buy)
+          freezeColumns(table, 7);
         }
       });
     </script>
