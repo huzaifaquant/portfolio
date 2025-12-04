@@ -3456,57 +3456,130 @@ HTML_TEMPLATE = """
       rel="stylesheet"
     />
     <style>
-      body { padding: 2rem; }
-      .table-responsive { max-height: 70vh; overflow: auto; }
-      pre { white-space: pre-wrap; }
-      table.dataTable thead th { position: sticky; top: 0; background: #f8f9fa; }
-      table.dataTable tbody tr:hover { background-color: #f5f5f5; }
+      body {
+        min-height: 100vh;
+        background: radial-gradient(circle at top, #1f2937 0, #020617 55%, #000 100%);
+        color: #e5e7eb;
+      }
+      .app-shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 2rem 1rem 3rem;
+      }
+      .card-glass {
+        background: rgba(15, 23, 42, 0.9);
+        border-radius: 1rem;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.7);
+      }
+      .card-glass-header {
+        border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      }
+      .hero-title {
+        letter-spacing: 0.05em;
+      }
+      .subtitle {
+        color: #9ca3af;
+      }
+      .table-wrapper {
+        max-height: 70vh;
+        overflow: auto;
+        border-radius: 0.75rem;
+        background: #020617;
+      }
+      table.dataTable thead th {
+        position: sticky;
+        top: 0;
+        background: #020617;
+        color: #e5e7eb;
+      }
+      table.dataTable tbody tr:hover {
+        background-color: #0b1120;
+      }
+      .form-text {
+        color: #9ca3af;
+      }
     </style>
   </head>
   <body>
-    <div class="container-fluid">
-      <h1 class="mb-4">Portfolio Metrics from CSV</h1>
+    <div class="app-shell">
+      <header class="mb-4 text-center">
+        <h1 class="hero-title display-6 fw-semibold text-light mb-2">
+          Portfolio Backtester
+        </h1>
+        <p class="subtitle mb-0">
+          Upload a trades CSV and explore full portfolio metrics, PnL, and risk in one view.
+        </p>
+      </header>
 
-      <form method="post" enctype="multipart/form-data" class="row g-3 mb-4">
-        <div class="col-md-4 col-lg-3">
-          <label for="csv_file" class="form-label">Trades CSV</label>
-          <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required />
-          <div class="form-text">
-            Required columns (case-insensitive): ticker/symbol/tvId/tv_Id, side, price, quantity. Optional: date/cts/mts.
+      <section class="mb-4">
+        <div class="card-glass">
+          <div class="card-body p-4">
+            <form method="post" enctype="multipart/form-data" class="row g-3 align-items-end">
+              <div class="col-md-5 col-lg-4">
+                <label for="csv_file" class="form-label text-light">Trades CSV</label>
+                <input
+                  class="form-control"
+                  type="file"
+                  id="csv_file"
+                  name="csv_file"
+                  accept=".csv"
+                  required
+                />
+                <div class="form-text mt-1">
+                  Required (case-insensitive): ticker/symbol/tvId/tv_Id, side, price, quantity.
+                  Optional: date/cts/mts.
+                </div>
+              </div>
+              <div class="col-md-3 col-lg-2">
+                <label for="initial_cash" class="form-label text-light">Initial Balance</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  class="form-control"
+                  id="initial_cash"
+                  name="initial_cash"
+                  value="{{ initial_cash }}"
+                />
+              </div>
+              <div class="col-md-3 col-lg-2">
+                <label class="form-label text-light d-block">&nbsp;</label>
+                <button class="btn btn-primary w-100" type="submit">
+                  Run Portfolio
+                </button>
+              </div>
+            </form>
           </div>
         </div>
-        <div class="col-md-3 col-lg-2">
-          <label for="initial_cash" class="form-label">Initial Balance</label>
-          <input
-            type="number"
-            step="0.01"
-            class="form-control"
-            id="initial_cash"
-            name="initial_cash"
-            value="{{ initial_cash }}"
-          />
-        </div>
-        <div class="col-md-3 align-self-end">
-          <button class="btn btn-primary" type="submit">Run Portfolio</button>
-        </div>
-      </form>
+      </section>
 
       {% if error %}
-        <div class="alert alert-danger" role="alert">
-          {{ error }}
-        </div>
+        <section class="mb-3">
+          <div class="alert alert-danger shadow-sm mb-0" role="alert">
+            {{ error }}
+          </div>
+        </section>
       {% endif %}
 
       {% if df_html %}
-        <div class="d-flex justify-content-between align-items-center mt-4">
-          <h2 class="mb-0">Portfolio Results</h2>
-          <a href="{{ url_for('download_csv') }}" class="btn btn-outline-secondary">
-            Download CSV
-          </a>
-        </div>
-        <div class="table-responsive mt-3">
-          {{ df_html | safe }}
-        </div>
+        <section class="mt-3">
+          <div class="card-glass">
+            <div
+              class="card-glass-header d-flex justify-content-between align-items-center px-4 py-3"
+            >
+              <div>
+                <h2 class="h5 mb-0 text-light">Portfolio Results</h2>
+                <small class="subtitle">Sortable, searchable trade and metric table</small>
+              </div>
+              <a href="{{ url_for('download_csv') }}" class="btn btn-outline-light btn-sm">
+                Download CSV
+              </a>
+            </div>
+            <div class="table-wrapper p-3">
+              {{ df_html | safe }}
+            </div>
+          </div>
+        </section>
       {% endif %}
     </div>
 
