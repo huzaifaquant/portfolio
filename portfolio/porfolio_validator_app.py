@@ -31,8 +31,8 @@ next_trade_number = 1  # Global counter for next new trade
 investment_count = 0  # Cumulative count of positions opened (long buy or short sell)
 
 COLUMNS = [
-    'Date','Ticker','Side','Quantity Buy','Price','Direction','Asset Type','Initial Balance','Buyable/Sellable',
-    'Available Balance','Current Quantity',
+    'Date','Ticker','Side','Quantity Buy','Price','Current Quantity','Direction','Asset Type','Initial Balance','Buyable/Sellable',
+    'Available Balance',
     'Avg Price','Cost Basis','Equity',
     'PnL (Long) Unrealized','PnL (Short) Unrealized','Pnl Unrealized','PnL Unrealized Total Value for Current Ticker','PnL realized Total Value for Current Ticker',
     'PnL Realized at Point of Time','PnL Unrealized at Point of Time',
@@ -3719,9 +3719,9 @@ HTML_TEMPLATE = """
             }
           }
 
-          // Freeze first 6 visible columns: Index, Date, Ticker, Side, Quantity Buy, Price
-          // Direction and all columns after it will scroll horizontally.
-          freezeColumns(table, 6);
+        // Freeze first 7 visible columns: Index, Date, Ticker, Side, Quantity Buy, Price, Current Quantity
+        // Direction and all columns after it will scroll horizontally.
+        freezeColumns(table, 7);
         }
       });
     </script>
