@@ -10,6 +10,8 @@ pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 0)
 pd.set_option('display.max_colwidth', None)
+# Show floats with high precision so prices and PnL are not visually rounded
+pd.set_option('display.float_format', lambda x: f'{x:.12f}')
 
 # ---------- Global State ----------
 
@@ -2077,7 +2079,7 @@ def calculate_average_holding_days(is_closing_trade=False, previous_df=None):
 
     # Formula: AHP = Σ(holdingPeriod_i × closeQty_i) / Σ closeQty_i
     avg = portfolio_state['cumulative_holding_sum'] / total_closed_qty
-    return round(avg, 3)  # Round to 3 decimal places
+    return avg
 
 def calculate_asset_count():
     """
@@ -3156,8 +3158,8 @@ def process_trade(
         'Quantity Buy': q_in,
         'Available Balance': new_remaining,
         'Current Quantity': new_q,
-        'Price': price,
-        'Avg Price': avg_p,
+        'Price': repr(price),
+        'Avg Price': repr(avg_p),
         'Cost Basis': cb,
         'Equity': pv,
         'PnL (Long) Unrealized': long_unrealized,
@@ -3601,7 +3603,7 @@ HTML_TEMPLATE = """
       <section class="mb-4">
         <div class="card-glass">
           <div class="card-body p-4">
-            <form method="post" enctype="multipart/form-data" class="row g-3 align-items-end">
+            <form method="post" enctype="multipart/form-data" class="row gx-3 gy-1 align-items-end">
               <div class="col-md-5 col-lg-4">
                 <label for="csv_file" class="form-label text-light">Trades CSV</label>
                 <input
