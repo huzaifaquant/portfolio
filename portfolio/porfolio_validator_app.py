@@ -2786,8 +2786,8 @@ def process_trade(
         - Updates global state (quantities, cost_basis, avg_price, etc.)
     """
     ticker = str(ticker).strip().upper()
-
-    # Normalize quantity input (handles various formats)
+    
+        # Normalize quantity input (handles various formats)
     q_in = normalize_quantity(quantity_buy)
 
     # Get previous state
@@ -3078,7 +3078,16 @@ def process_trade(
     
     # Store asset type for this ticker (auto-map if not provided)
     # Priority: explicit asset_type argument > auto map > existing stored type
-    inferred_asset_type = asset_type or ASSET_TYPE_MAP.get(ticker) or portfolio_state['asset_types'].get(ticker)
+    inferred_asset_type = (
+        asset_type
+        or ASSET_TYPE_MAP.get(ticker)
+        or portfolio_state['asset_types'].get(ticker)
+    )
+
+    # If we still don't know the asset type but user supplied equity-style metadata,
+    # assume Equity so market_cap/industry/sector and distributions work.
+    if inferred_asset_type is None and any([market_cap, industry, sector]):
+        inferred_asset_type = "Equity"
 
     if inferred_asset_type:
         portfolio_state['asset_types'][ticker] = inferred_asset_type
@@ -3569,6 +3578,10 @@ HTML_TEMPLATE = """
       .card-glass-header .dataTables_filter input[type="search"] {
         width: 220px;
       }
+      /* Lighten muted helper text inside cards so it's readable on dark background */
+      .card-glass .text-muted {
+        color: #cbd5f5 !important;
+      }
       .form-text {
         color: #9ca3af;
       }
@@ -3609,6 +3622,74 @@ HTML_TEMPLATE = """
             name="initial_cash"
             value="{{ initial_cash }}"
           />
+              </div>
+              <div class="col-12">
+                <div class="border rounded-3 border-secondary-subtle p-3 mt-1">
+                  <p class="mb-2 small text-light fw-semibold">
+                    Optional equity metadata from CSV
+                  </p>
+                  <p class="mb-2 small text-muted">
+                    If your CSV has these columns, you can feed them directly into the engine.
+                    When unchecked, the app will auto-infer using built-in mappings.
+                  </p>
+                  <div class="row g-2">
+                    <div class="col-6 col-md-3">
+                      <div class="form-check form-switch">
+                        <input
+                          class="form-check-input"
+                          type="checkbox"
+                          id="include_asset_type"
+                          name="include_asset_type"
+                        />
+                        <label class="form-check-label small text-light" for="include_asset_type">
+                          Use <code>Asset Type</code> Column
+                        </label>
+                      </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                      <div class="form-check form-switch">
+                        <input
+                          class="form-check-input"
+                          type="checkbox"
+                          id="include_market_cap"
+                          name="include_market_cap"
+                        />
+                        <label class="form-check-label small text-light" for="include_market_cap">
+                          Use <code>Market Cap</code> Column
+                        </label>
+                      </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                      <div class="form-check form-switch">
+                        <input
+                          class="form-check-input"
+                          type="checkbox"
+                          id="include_industry"
+                          name="include_industry"
+                        />
+                        <label class="form-check-label small text-light" for="include_industry">
+                          Use <code>Industry</code> Column
+                        </label>
+                      </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                      <div class="form-check form-switch">
+                        <input
+                          class="form-check-input"
+                          type="checkbox"
+                          id="include_sector"
+                          name="include_sector"
+                        />
+                        <label class="form-check-label small text-light" for="include_sector">
+                          Use <code>Sector</code> Column
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="mb-0 mt-2 small text-muted">
+                    Column names are case-insensitive. Missing columns are treated as empty.
+                  </p>
+                </div>
         </div>
               <div class="col-md-3 col-lg-2">
                 <label class="form-label text-light d-block">&nbsp;</label>
@@ -3619,7 +3700,7 @@ HTML_TEMPLATE = """
               <div class="col-12">
                 <div class="form-text mt-1">
                   Required (case-insensitive): ticker/symbol/tvId/tv_Id, side, price, quantity.
-                  Optional: date/cts/mts.
+                  Optional: date/cts/mts, asset_type, market_cap, industry, sector.
                 </div>
         </div>
       </form>
@@ -3766,7 +3847,7 @@ HTML_TEMPLATE = """
           }
 
         // Freeze first 7 visible columns: Index, Date, Ticker, Side, Quantity Buy, Price, Current Quantity
-        // Direction and all columns after it will scroll horizontally.
+          // Direction and all columns after it will scroll horizontally.
         freezeColumns(table, 7);
         }
       });
@@ -3779,6 +3860,10 @@ HTML_TEMPLATE = """
 def _run_portfolio_on_dataframe(
     trades: pd.DataFrame,
     initial_cash: float,
+    include_asset_type: bool = False,
+    include_market_cap: bool = False,
+    include_industry: bool = False,
+    include_sector: bool = False,
 ) -> pd.DataFrame:
     """
     Core driver: given a trades DataFrame, feed it into the portfolio engine.
@@ -3810,6 +3895,18 @@ def _run_portfolio_on_dataframe(
     quantity_col = get_col(["quantity"], label="quantity")
     date_col = get_col(["date", "cts", "mts"], required=False, label="date")
 
+    # Optional metadata columns (case-insensitive, only if user requested)
+    asset_type_col = market_cap_col = industry_col = sector_col = None
+
+    if include_asset_type:
+        asset_type_col = get_col(["asset_type"], required=False, label="asset_type")
+    if include_market_cap:
+        market_cap_col = get_col(["market_cap", "market cap"], required=False, label="market_cap")
+    if include_industry:
+        industry_col = get_col(["industry"], required=False, label="industry")
+    if include_sector:
+        sector_col = get_col(["sector"], required=False, label="sector")
+
     reset_portfolio(initial_cash)
 
     for _, row in trades.iterrows():
@@ -3828,14 +3925,39 @@ def _run_portfolio_on_dataframe(
         if date_col is not None:
             trade_date = normalize_trade_date(row[date_col])
 
-        # Let engine infer asset_type from ASSET_TYPE_MAP if None
+        # Optional metadata values from CSV (if columns selected and present)
+        asset_type_val = None
+        market_cap_val = None
+        industry_val = None
+        sector_val = None
+
+        if include_asset_type and asset_type_col is not None and not pd.isna(row[asset_type_col]):
+            s = str(row[asset_type_col]).strip()
+            asset_type_val = s or None
+
+        if include_market_cap and market_cap_col is not None and not pd.isna(row[market_cap_col]):
+            s = str(row[market_cap_col]).strip()
+            market_cap_val = s or None
+
+        if include_industry and industry_col is not None and not pd.isna(row[industry_col]):
+            s = str(row[industry_col]).strip()
+            industry_val = s or None
+
+        if include_sector and sector_col is not None and not pd.isna(row[sector_col]):
+            s = str(row[sector_col]).strip()
+            sector_val = s or None
+
+        # Let engine infer from mappings when values are None; explicit values override
         add_trade(
             ticker=ticker,
-            asset_type=None,
+            asset_type=asset_type_val,
             side=side_raw,
             price=price,
             quantity_buy=qty,
             date=trade_date,
+            market_cap=market_cap_val,
+            industry=industry_val,
+            sector=sector_val,
         )
 
     # Store last result for CSV export
@@ -3854,6 +3976,12 @@ def index():
         file = request.files.get("csv_file")
         initial_cash_raw = request.form.get("initial_cash", "").strip()
 
+        # Optional metadata toggles from form (checkboxes)
+        include_asset_type = bool(request.form.get("include_asset_type"))
+        include_market_cap = bool(request.form.get("include_market_cap"))
+        include_industry = bool(request.form.get("include_industry"))
+        include_sector = bool(request.form.get("include_sector"))
+
         try:
             # Strip commas for numeric parsing (allows inputs like "10,000")
             cleaned = initial_cash_raw.replace(",", "")
@@ -3867,7 +3995,14 @@ def index():
             try:
                 content = file.read()
                 trades_df = pd.read_csv(io.BytesIO(content))
-                result_df = _run_portfolio_on_dataframe(trades_df, initial_cash)
+                result_df = _run_portfolio_on_dataframe(
+                    trades_df,
+                    initial_cash,
+                    include_asset_type=include_asset_type,
+                    include_market_cap=include_market_cap,
+                    include_industry=include_industry,
+                    include_sector=include_sector,
+                )
                 last_result_df = result_df
                 df_html = result_df.to_html(
                     classes="table table-striped table-sm",
