@@ -3893,15 +3893,18 @@ def _run_portfolio_on_dataframe(
     # Core columns
     ticker_col = get_col(["ticker", "symbol", "tvid", "tv_id"], label="ticker")
     side_col = get_col(["side"], label="side")
-    price_col = get_col(["price"], label="price")
+    # Allow price or entryPrice
+    price_col = get_col(["price", "entryPrice"], label="price")
     quantity_col = get_col(["quantity"], label="quantity")
-    date_col = get_col(["date", "cts", "mts"], required=False, label="date")
+    # Allow date-style aliases including entryDate
+    date_col = get_col(["date", "cts", "mts", "entryDate"], required=False, label="date")
 
     # Optional metadata columns (case-insensitive, only if user requested)
     asset_type_col = market_cap_col = industry_col = sector_col = None
 
     if include_asset_type:
-        asset_type_col = get_col(["asset_type"], required=False, label="asset_type")
+        # Allow asset_type or assetClass
+        asset_type_col = get_col(["asset_type", "assetClass"], required=False, label="asset_type")
     if include_market_cap:
         market_cap_col = get_col(["market_cap", "market cap"], required=False, label="market_cap")
     if include_industry:
