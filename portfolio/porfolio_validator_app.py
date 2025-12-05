@@ -3624,7 +3624,7 @@ HTML_TEMPLATE = """
             name="initial_cash"
             value="{{ initial_cash }}"
           />
-              </div>
+        </div>
               <div class="col-12">
                 <div class="border rounded-3 border-secondary-subtle p-3 mt-1">
                   <p class="mb-2 small text-light fw-semibold">
@@ -3693,8 +3693,8 @@ HTML_TEMPLATE = """
                   </p>
                 </div>
         </div>
-              <div class="col-md-3 col-lg-2">
-                <label class="form-label text-light d-block">&nbsp;</label>
+              <div class="col-md-3 col-lg-2 mt-2">
+                <label class="form-label text-light d-block mb-0 visually-hidden">Run Portfolio</label>
                 <button class="btn btn-primary w-100" type="submit">
                   Run Portfolio
                 </button>
