@@ -2730,7 +2730,19 @@ def calculate_equity_distribution_sector(ticker_pv_dict):
 
 # ---------- Main entry per trade ----------
 
-def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take_profit_pct=0.20, stop_loss_pct=0.10):
+def process_trade(
+    ticker,
+    asset_type,
+    side,
+    price,
+    quantity_buy,
+    date=None,
+    take_profit_pct=0.20,
+    stop_loss_pct=0.10,
+    market_cap=None,
+    industry=None,
+    sector=None,
+):
     """
     Main function to process a single trade and update portfolio state.
     
@@ -2774,8 +2786,8 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
         - Updates global state (quantities, cost_basis, avg_price, etc.)
     """
     ticker = str(ticker).strip().upper()
-    
-        # Normalize quantity input (handles various formats)
+
+    # Normalize quantity input (handles various formats)
     q_in = normalize_quantity(quantity_buy)
 
     # Get previous state
@@ -3065,9 +3077,8 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     lowest_traded_volume = get_lowest_traded_volume()
     
     # Store asset type for this ticker (auto-map if not provided)
-    inferred_asset_type = asset_type
-    if not inferred_asset_type:
-        inferred_asset_type = ASSET_TYPE_MAP.get(ticker)
+    # Priority: explicit asset_type argument > auto map > existing stored type
+    inferred_asset_type = asset_type or ASSET_TYPE_MAP.get(ticker) or portfolio_state['asset_types'].get(ticker)
 
     if inferred_asset_type:
         portfolio_state['asset_types'][ticker] = inferred_asset_type
@@ -3098,15 +3109,26 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
 
     # Calculate Equity Distribution 
     # Store equity metadata (market cap, industry, sector) if Equity asset type
-    if asset_type and asset_type.lower() == 'equity':
-        # Get metadata from hardcoded mapping (or default to None if not found)
+    # Priority per field: explicit argument > hardcoded metadata > existing stored value
+    if inferred_asset_type and str(inferred_asset_type).lower() == 'equity':
+        # Start from any existing values for this ticker
+        existing_mc = portfolio_state['market_cap'].get(ticker)
+        existing_ind = portfolio_state['industry'].get(ticker)
+        existing_sec = portfolio_state['sector'].get(ticker)
+
+        # Hardcoded metadata (acts as default if nothing explicit is provided)
         metadata = EQUITY_METADATA.get(ticker, {})
-        if metadata.get('market_cap'):
-            portfolio_state['market_cap'][ticker] = metadata['market_cap']
-        if metadata.get('industry'):
-            portfolio_state['industry'][ticker] = metadata['industry']
-        if metadata.get('sector'):
-            portfolio_state['sector'][ticker] = metadata['sector']
+
+        mc_value = market_cap or metadata.get('market_cap') or existing_mc
+        ind_value = industry or metadata.get('industry') or existing_ind
+        sec_value = sector or metadata.get('sector') or existing_sec
+
+        if mc_value:
+            portfolio_state['market_cap'][ticker] = mc_value
+        if ind_value:
+            portfolio_state['industry'][ticker] = ind_value
+        if sec_value:
+            portfolio_state['sector'][ticker] = sec_value
 
     # Calculate Equity Distributions (only for Equity asset types)
     equity_dist_market_cap = calculate_equity_distribution_market_cap(ticker_pv_dict)
@@ -3203,7 +3225,19 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     return row
 
     
-def add_trade(ticker, asset_type=None, side='buy', price=0.0, quantity_buy=0.0, date=None, take_profit_pct=0.20, stop_loss_pct=0.10):
+def add_trade(
+    ticker,
+    asset_type=None,
+    side='buy',
+    price=0.0,
+    quantity_buy=0.0,
+    date=None,
+    take_profit_pct=0.20,
+    stop_loss_pct=0.10,
+    market_cap=None,
+    industry=None,
+    sector=None,
+):
     """
     Add a trade to the portfolio and return the updated DataFrame.
     
@@ -3223,7 +3257,19 @@ def add_trade(ticker, asset_type=None, side='buy', price=0.0, quantity_buy=0.0, 
     Returns:
         pd.DataFrame: Updated portfolio DataFrame with all trades
     """
-    process_trade(ticker, asset_type, side, price, quantity_buy, date, take_profit_pct, stop_loss_pct)
+    process_trade(
+        ticker,
+        asset_type,
+        side,
+        price,
+        quantity_buy,
+        date,
+        take_profit_pct,
+        stop_loss_pct,
+        market_cap=market_cap,
+        industry=industry,
+        sector=sector,
+    )
     return get_portfolio_df()
 
 # ---------- Formulas ----------
