@@ -2008,15 +2008,15 @@ def get_highest_traded_volume():
     Returns the historical maximum traded volume across all trades.
     
     Returns:
-        int: Highest traded volume, or 0 if no trades have been recorded
+        float: Highest traded volume rounded to 2 decimal places, or 0 if no trades have been recorded
     
     Edge cases:
         - Returns 0 if no trades recorded (highest_traded_volume is None)
-        - Converts to integer for display
+        - Rounds to 2 decimal places to preserve sub-dollar volumes (e.g. crypto/penny stocks)
     """
     if portfolio_state['highest_traded_volume'] is None:
         return 0
-    return int(portfolio_state['highest_traded_volume'])
+    return round(portfolio_state['highest_traded_volume'], 2)
 
 def get_lowest_traded_volume():
     """
@@ -2025,15 +2025,15 @@ def get_lowest_traded_volume():
     Returns the historical minimum traded volume across all trades.
     
     Returns:
-        int: Lowest traded volume, or 0 if no trades have been recorded
+        float: Lowest traded volume rounded to 2 decimal places, or 0 if no trades have been recorded
     
     Edge cases:
         - Returns 0 if no trades recorded (lowest_traded_volume is None)
-        - Converts to integer for display
+        - Rounds to 2 decimal places to preserve sub-dollar volumes (e.g. crypto/penny stocks)
     """
     if portfolio_state['lowest_traded_volume'] is None:
         return 0
-    return int(portfolio_state['lowest_traded_volume'])
+    return round(portfolio_state['lowest_traded_volume'], 2)
 
 # ---------- Average holding days (track opens, detect closes, update AHP) ----------
 
@@ -2725,7 +2725,7 @@ def calculate_equity_distribution_sector(ticker_pv_dict):
 
 # ---------- Main entry: one trade (or hold) → one row, state updated ----------
 
-def process_trade(ticker, asset_type, side, price, quantity_buy, date=None,take_profit_pct=0.20, stop_loss_pct=0.10):
+def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take_profit_pct=0.20, stop_loss_pct=0.10, market_cap=None, industry=None, sector=None):
     """
     Process one trade (or hold) and append one row. All metrics come from state.
     
@@ -3073,15 +3073,24 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None,take_
 
     # Calculate Equity Distribution 
     # Store equity metadata (market cap, industry, sector) if Equity asset type
-    if asset_type and asset_type.lower() == 'equity':
-        # Get metadata from hardcoded mapping (or default to None if not found)
+    # Priority: explicit argument > hardcoded EQUITY_METADATA > existing stored value
+    if inferred_asset_type and inferred_asset_type.lower() == 'equity':
+        existing_mc  = portfolio_state['market_cap'].get(ticker)
+        existing_ind = portfolio_state['industry'].get(ticker)
+        existing_sec = portfolio_state['sector'].get(ticker)
+
         metadata = EQUITY_METADATA.get(ticker, {})
-        if metadata.get('market_cap'):
-            portfolio_state['market_cap'][ticker] = metadata['market_cap']
-        if metadata.get('industry'):
-            portfolio_state['industry'][ticker] = metadata['industry']
-        if metadata.get('sector'):
-            portfolio_state['sector'][ticker] = metadata['sector']
+
+        mc_value  = market_cap  or metadata.get('market_cap')  or existing_mc
+        ind_value = industry    or metadata.get('industry')     or existing_ind
+        sec_value = sector      or metadata.get('sector')       or existing_sec
+
+        if mc_value:
+            portfolio_state['market_cap'][ticker] = mc_value
+        if ind_value:
+            portfolio_state['industry'][ticker] = ind_value
+        if sec_value:
+            portfolio_state['sector'][ticker] = sec_value
 
     # Calculate Equity Distributions (only for Equity asset types)
     equity_dist_market_cap = calculate_equity_distribution_market_cap(ticker_pv_dict)
@@ -3193,7 +3202,7 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None,take_
     return row
 
     
-def add_trade(ticker, asset_type=None, side='buy', price=0.0, quantity_buy=0.0, date=None, take_profit_pct=0.20, stop_loss_pct=0.10):
+def add_trade(ticker, asset_type=None, side='buy', price=0.0, quantity_buy=0.0, date=None, take_profit_pct=0.20, stop_loss_pct=0.10, market_cap=None, industry=None, sector=None):
     """
     Add one trade (or hold) to the portfolio. Updates state and appends one row.
     
@@ -3222,6 +3231,9 @@ def add_trade(ticker, asset_type=None, side='buy', price=0.0, quantity_buy=0.0, 
                                          Format: 'YYYY-MM-DD HH:MM:SS' or datetime object
         take_profit_pct (float, optional): Take profit percentage for display (default 0.20 = 20%)
         stop_loss_pct (float, optional): Stop loss percentage for display (default 0.10 = 10%)
+        market_cap (str, optional): Market cap category for equity distribution (e.g., 'High', 'Mid', 'Low').
+        industry (str, optional): Industry for equity distribution (e.g., 'Software', 'Healthcare').
+        sector (str, optional): Sector for equity distribution (e.g., 'Technology', 'Financials').
     
     Returns:
         None. The trade is processed and stored internally. 
@@ -3235,7 +3247,7 @@ def add_trade(ticker, asset_type=None, side='buy', price=0.0, quantity_buy=0.0, 
         >>> print(df[['Date', 'Side', 'Current Quantity', 'Account Value', 'Total Trades']])
         # Total Trades will show "1 Trades" (1 position: buy+sell pair)
     """
-    process_trade(ticker, asset_type, side, price, quantity_buy, date, take_profit_pct, stop_loss_pct)
+    process_trade(ticker, asset_type, side, price, quantity_buy, date, take_profit_pct, stop_loss_pct, market_cap=market_cap, industry=industry, sector=sector)
 
 
 # ---------- Formula reference (for docs / export) ----------
