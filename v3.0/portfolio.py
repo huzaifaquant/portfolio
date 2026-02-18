@@ -33,13 +33,10 @@ IMPORTANT CONCEPTS:
 • State-Based: No "previous DataFrame" lookups. All metrics use the internal 
   portfolio_state dictionary for maximum performance.
 
-• Auto-Finalize: When you call get_portfolio_df(auto_finalize=True), it automatically
-  adds final hold trades for any open positions to capture their current value.
-
 TYPICAL USAGE FLOW:
 -------------------
 ```python
-from src.helpers.portfolio.portfolio import reset_portfolio, add_trade, get_portfolio_df
+from portfolio import reset_portfolio, add_trade, get_portfolio_df
 
 # 1. Initialize
 reset_portfolio(initial_cash=10000)
@@ -52,12 +49,6 @@ add_trade(ticker='AAPL', side='sell', price=155.0, quantity=10, date='2024-01-15
 portfolio_df = get_portfolio_df()
 print(portfolio_df[['Date', 'Side', 'Account Value', 'Total PnL', 'Sharpe Ratio']])
 ```
-
-INTEGRATION:
-------------
-• Called by: portfolio_processor.py (via process_portfolio function)
-• Used in: Single-ticker, multi-ticker, and multi-condition strategies
-• Output: DataFrame with 78+ columns containing all portfolio metrics
 
 METRICS CALCULATED (78+ columns):
 ----------------------------------
@@ -214,18 +205,12 @@ def reset_portfolio(initial_cash=200):
     next_trade_number = 1
     investment_count = 0
 
-def get_portfolio_df(auto_finalize=False, latest_prices=None, date=None):
+def get_portfolio_df():
     """
     Build and return the portfolio table from accumulated state.
     
     Rows are stored in state as each trade is processed; this builds the DataFrame
     from those rows (or returns a cached copy). Call after adding all trades.
-    
-    Args:
-        auto_finalize (bool, optional): If True, add hold rows for all open positions
-                                        at latest prices before returning (snapshot).
-        latest_prices (dict, optional): Ticker → price for finalize. Used if auto_finalize=True.
-        date (str or datetime, optional): Date for finalize hold rows. Used if auto_finalize=True.
     
     Returns:
         pd.DataFrame: One row per trade (and per hold, if used), all metric columns.
@@ -236,9 +221,6 @@ def get_portfolio_df(auto_finalize=False, latest_prices=None, date=None):
         ...     add_trade(ticker, asset_type, side, price, quantity_buy, date)
         >>> df = get_portfolio_df()
     """
-    if auto_finalize:
-        # Generate hold trades snapshot for all open positions
-        generate_hold_trades_snapshot(latest_prices=latest_prices, date=date)
 
     rows = portfolio_state.get('rows', [])
     df = portfolio_state.get('portfolio_df')
@@ -3255,147 +3237,6 @@ def add_trade(ticker, asset_type=None, side='buy', price=0.0, quantity_buy=0.0, 
     """
     process_trade(ticker, asset_type, side, price, quantity_buy, date, take_profit_pct, stop_loss_pct)
 
-# ---------- Hold snapshot (one hold row per open position at latest prices) ----------
-
-def generate_hold_trades_snapshot(latest_prices=None, date=None, take_profit_pct=0.20, stop_loss_pct=0.10):
-    """
-    Add one hold row per ticker at latest prices (snapshot at a point in time).
-    
-    Used to finalize the portfolio: for each ticker in latest_prices (or all tracked tickers),
-    add_trade(..., side='hold', quantity_buy=0, price=latest_price). Creates hold trades
-    for ALL tickers, regardless of position status (open or flat).
-    
-    Args:
-        latest_prices (dict, optional): Dictionary mapping ticker to latest price.
-                                       Format: {'AAPL': 150.25, 'MSFT': 380.50}
-                                       If provided, creates hold trades for ALL tickers in this dict.
-                                       If None, uses all tracked tickers with their stored last prices.
-        date (str or datetime, optional): Date for the hold trades. 
-                                         If None, uses the last date from portfolio_df or current date.
-        take_profit_pct (float, optional): Take profit percentage for display (default 0.20 = 20%)
-        stop_loss_pct (float, optional): Stop loss percentage for display (default 0.10 = 10%)
-    
-    Returns:
-        pd.DataFrame: Updated portfolio DataFrame including hold trades for all tickers
-    
-    Example:
-        >>> # After processing some trades, create snapshot for all tickers
-        >>> latest_prices = {'AAPL': 150.25, 'MSFT': 380.50, 'GOOGL': 140.75}
-        >>> df = generate_hold_trades_snapshot(latest_prices=latest_prices)
-        >>> # Or use stored prices for all tracked tickers:
-        >>> df = generate_hold_trades_snapshot()
-    
-    Notes:
-        - Creates hold trades for ALL tickers (not just those with open positions)
-        - Uses 'hold' side which doesn't change position quantities
-        - Updates unrealized PnL for open positions, shows flat for closed positions
-        - Processes tickers in sorted order for consistent output
-    """
-    # Determine which tickers to process
-    if latest_prices:
-        # If latest_prices provided, create hold trades for ALL tickers in it (not just open positions)
-        tickers_to_process = set(latest_prices.keys())
-    else:
-        # Otherwise, use all tickers that have been tracked in the portfolio
-        tickers_to_process = set(portfolio_state['quantities'].keys())
-    
-    if not tickers_to_process:
-        # No tickers to process, return current portfolio DataFrame
-        return get_portfolio_df()
-    
-    # Determine date for hold trades
-    if date is None:
-        if portfolio_state.get('last_trade_date') is not None:
-            date = portfolio_state['last_trade_date']
-        else:
-            # Use current date as fallback
-            from datetime import datetime
-            date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Process hold trades for each ticker (sorted for consistency)
-    for ticker in sorted(tickers_to_process):
-        # Force ticker to uppercase for matching (fix case-sensitivity bug)
-        ticker = str(ticker).strip().upper()
-        
-        # Get current quantity (0 if no position)
-        qty = portfolio_state['quantities'].get(ticker, 0)
-        
-        # Determine price to use
-        if latest_prices and ticker in latest_prices:
-            # Use provided latest price (check with uppercase ticker)
-            price = latest_prices[ticker]
-        elif latest_prices and ticker in latest_prices:
-            # Fallback: try original case (in case latest_prices has lowercase keys)
-            price = latest_prices[ticker]
-        elif ticker in portfolio_state['last_price']:
-            # Use stored last price
-            price = portfolio_state['last_price'][ticker]
-        else:
-            # No price available, skip this ticker
-            print(f"⚠️ Warning: No price available for {ticker}, skipping hold trade")
-            continue
-        
-        # Get asset type (use stored or default to 'Equity')
-        asset_type = portfolio_state['asset_types'].get(ticker, 'Equity')
-        
-        # Calculate unrealized return for this open position and add to trade_returns
-        avg_price = portfolio_state['avg_price'].get(ticker, 0)
-        if avg_price > 0:
-            # Calculate return based on position type
-            if qty > 0:  # Long
-                unrealized_return = (price - avg_price) / avg_price
-            else:  # Short
-                unrealized_return = (avg_price - price) / avg_price
-            
-            # Add to trade_returns list for Backtester Net Performance
-            portfolio_state['trade_returns'].append(unrealized_return)
-        
-        # Process hold trade (quantity_buy doesn't matter for hold, position stays same)
-        # We pass 0 as quantity since hold doesn't change the position
-        process_trade(
-            ticker=ticker,
-            asset_type=asset_type,
-            side='hold',
-            price=price,
-            quantity_buy=0,  # Hold doesn't change quantity
-            date=date,
-            take_profit_pct=take_profit_pct,
-            stop_loss_pct=stop_loss_pct
-        )
-    
-    return get_portfolio_df()
-
-
-def finalize_portfolio(latest_prices=None, date=None, take_profit_pct=0.20, stop_loss_pct=0.10):
-    """
-    Finalize the portfolio by generating hold trades for all open positions.
-    
-    This is a convenience wrapper around generate_hold_trades_snapshot() with a clearer name
-    for use at the end of processing all trades.
-    
-    Typical usage:
-        >>> # Process all your trades
-        >>> for trade in trades:
-        >>>     add_trade(ticker, asset_type, side, price, quantity, date)
-        >>> 
-        >>> # Finalize with current prices
-        >>> final_df = finalize_portfolio(latest_prices={'AAPL': 150.25, 'MSFT': 380.50})
-    
-    Args:
-        latest_prices (dict, optional): Dictionary mapping ticker to latest price
-        date (str or datetime, optional): Date for the hold trades
-        take_profit_pct (float, optional): Take profit percentage (default 0.20)
-        stop_loss_pct (float, optional): Stop loss percentage (default 0.10)
-    
-    Returns:
-        pd.DataFrame: Finalized portfolio DataFrame with hold trades for all open positions
-    """
-    return generate_hold_trades_snapshot(
-        latest_prices=latest_prices,
-        date=date,
-        take_profit_pct=take_profit_pct,
-        stop_loss_pct=stop_loss_pct
-    )
 
 # ---------- Formula reference (for docs / export) ----------
 
