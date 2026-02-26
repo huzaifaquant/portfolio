@@ -383,31 +383,42 @@ def get_or_create_trade_number(ticker, old_q, new_q, side):
     
     # If maintaining/changing position (old_q != 0, new_q != 0)
     if old_q != 0 and new_q != 0:
-        # Continue existing trade
+        # Detect flip: position direction reversed (long→short or short→long)
+        is_flip = (old_q > 0 and new_q < 0) or (old_q < 0 and new_q > 0)
+        if is_flip:
+            # The flip row closes the old trade — return the old trade number for this row.
+            old_trade_number = trade_tracker.get(ticker)
+            # Assign a fresh trade number for the new position (used on subsequent rows).
+            new_trade_number = next_trade_number
+            trade_tracker[ticker] = new_trade_number
+            next_trade_number += 1
+            return old_trade_number
+        # Continue existing trade (partial fill, add-on, etc.)
         return trade_tracker.get(ticker)
     
     # No position (old_q == 0, new_q == 0)
     return None
 
-def format_trade_string(side, current_direction, trade_number, new_q):
+def format_trade_string(side, current_direction, trade_number, new_q, is_flip=False):
     """
     Format trade string for display.
     
-    Format: "Direction - side - #TradeNo Trade - Quantity" or "... - 0 - Close"
+    Format: "Direction - side - #TradeNo Trade - Quantity" or "... - 0.0 - Close" / "... - 10.0 - Flipped"
     
     Args:
         side (str): Trade side ('buy', 'sell', 'hold')
         current_direction (str or None): Current direction ('long', 'short', 'hold'), or None if no buy/sell yet
         trade_number (int or None): Trade number
         new_q (float): New quantity after trade
+        is_flip (bool): Whether this trade is a position reversal (flip)
     
     Returns:
         str: Formatted trade string or "No Buy/Sell" if no trade
     
     Examples:
-        - "Long - Buy - #1 Trade - 10"
-        - "Long - Sell - #1 Trade - 0 - Close"
-        - "Short - Sell - #2 Trade - 5"
+        - "Long - Buy - #1 Trade - 10.0"
+        - "Long - Sell - #1 Trade - 0.0 - Close"
+        - "Short - Sell - #2 Trade - 10.0 - Flipped"
     """
     if trade_number is None:
         return "No Buy/Sell"
@@ -415,24 +426,26 @@ def format_trade_string(side, current_direction, trade_number, new_q):
     side_str = str(side)
     dir_str = 'Null' if current_direction is None else str(current_direction)
     
-    # Format quantity - use absolute value since direction already explains it
+    # Format quantity using floats; label close and flip events explicitly
     if new_q == 0:
-        quantity_str = "0 - Close"
+        quantity_str = f"{abs(new_q)} - Close"
+    elif is_flip:
+        quantity_str = f"{abs(new_q)} - Flipped"
     else:
-        # Use absolute value for quantity
-        quantity_str = str(int(abs(new_q)))
+        quantity_str = str(abs(new_q))
     
     # Include Buy/Sell in the output
     return f" {dir_str.capitalize()} - {side_str.capitalize()} - #{trade_number} Trade - {quantity_str}"
 
 def is_close_trade_string(trade_string):
     """
-    Return True if a trade string represents a closing trade.
-    Uses case-insensitive matching for the "- Close" suffix.
+    Return True if a trade string represents a closing trade (full close or flip).
+    Uses case-insensitive matching for "- Close" and "- Flipped" suffixes.
     """
     if not trade_string or trade_string == "No Buy/Sell":
         return False
-    return "- close" in str(trade_string).lower()
+    lower = str(trade_string).lower()
+    return "- close" in lower or "- flipped" in lower
 
 # ---------- Core single-trade calculations (cash, quantity, cost basis, PnL) ----------
 
@@ -1174,7 +1187,7 @@ def open_positions_str():
             parts.append(f"{ticker_upper} {q}")
     return ", ".join(parts) if parts else "None"
 
-def open_pv_str(current_ticker, current_price, current_position):
+def open_pv_str():
     """
     Generate string of all open position values (PV) for each ticker.
     
@@ -1184,16 +1197,10 @@ def open_pv_str(current_ticker, current_price, current_position):
     
     Format: "TICKER1 PV1, TICKER2 PV2, ..."
     
-    Args:
-        current_ticker (str): Ticker being traded in current row
-        current_price (float): Current price for current ticker
-        current_position (str): Current position type
-    
     Returns:
         str: Comma-separated list of tickers with PV values, or "None" if no positions
     
     Edge cases:
-        - Uses current_price for current ticker, last_price for others
         - Returns 0.0 PV if avg_price <= 0
     """
     parts = []
@@ -1468,11 +1475,13 @@ def calculate_trade_win_loss(trade_string, realized_pnl_at_point, unrealized_pnl
         return "Loss"
     return None  # total == 0: neither (e.g. trade just started or flat)
 
-def update_win_loss_counts_from_trade_pnl(ticker, is_closing_trade, realized_pnl_at_close, current_ticker_unrealized_pnl, new_quantity):
+def update_win_loss_counts_from_trade_pnl(ticker, is_closing_trade, realized_pnl_at_close, current_ticker_unrealized_pnl, new_quantity, old_quantity=0):
     """
     One slot per trade: update win/loss from trade PnL (realized at close, unrealized while open).
-    - On close: remove open slot for this ticker and add one to win or loss from realized_pnl_at_close.
-    - While open (new_quantity != 0): set or flip open_trade_win_loss_by_ticker[ticker] from current unrealized.
+    - On full close (new_quantity == 0): remove open slot, count realized PnL as win or loss.
+    - On flip (old_quantity and new_quantity have opposite signs): count realized PnL from the
+      closed portion, then fall through to set the new position's open slot.
+    - While open (new_quantity != 0, no flip): update open slot from current unrealized PnL.
     Keeps hold-run and no-hold-run counts aligned (same closes; open slot included in displayed rate/ratio).
     """
     counts = portfolio_state.setdefault('win_loss_counts', {'win': 0, 'loss': 0})
@@ -1485,7 +1494,10 @@ def update_win_loss_counts_from_trade_pnl(ticker, is_closing_trade, realized_pnl
                 counts['win'] += 1
             else:
                 counts['loss'] += 1
-        return
+        # Full close: nothing new to track
+        if new_quantity == 0:
+            return
+        # Flip: don't return — fall through to set the new position's open slot below.
 
     if new_quantity == 0:
         open_outcomes.pop(ticker, None)
@@ -2759,21 +2771,6 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     old_q = portfolio_state['quantities'][ticker]
     old_cb = portfolio_state['cost_basis'][ticker]
     
-    # Calculate what the new quantity would be to check for natural flips
-    # We need this to distinguish between natural flips and explicit opposite position opening
-    a = str(side).lower()
-    qty = abs(q_in) if q_in < 0 else q_in
-    
-    if a == 'hold':
-        new_q_calc = old_q
-    elif a == 'buy':
-        new_q_calc = old_q + qty
-    elif a == 'sell':
-        new_q_calc = old_q - qty
-    else:
-        new_q_calc = old_q
-    
-
     # Calculate cash and remaining
     cash = calculate_cash_single()
     new_remaining = calculate_remaining_single(side, price, q_in, old_q, old_cb)
@@ -2878,7 +2875,7 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
 
     # Generate strings for open positions
     open_pos = open_positions_str()
-    open_pv = open_pv_str(ticker, price, current_direction)
+    open_pv = open_pv_str()
     open_unrealized_pnl = open_pnl_unrealized_str(ticker, price) 
     
     # Calculate account value
@@ -2945,8 +2942,10 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     # Get trade number for this ticker
     trade_number = get_or_create_trade_number(ticker, old_q, new_q, side)
     
+    # Detect position flip (long→short or short→long) for trade string labelling
+    _is_flip = (old_q > 0 and new_q < 0) or (old_q < 0 and new_q > 0)
     # Format trade string
-    trade_string = format_trade_string(side, current_direction, trade_number, new_q)
+    trade_string = format_trade_string(side, current_direction, trade_number, new_q, is_flip=_is_flip)
 
     # Calculate Average Holding Days - only calculate when trade closes
     # Check if trade_string contains "- Close" to determine if this is a closing trade
@@ -2970,7 +2969,7 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     # Win/Loss: per-trade PnL (realized + unrealized for this ticker only), so hold vs trades-only match
     win_loss = calculate_trade_win_loss(trade_string, realized_pnl_at_point, total_current_ticker_unrealized, side)
     update_win_loss_counts_from_trade_pnl(
-        ticker, is_closing_trade, realized_pnl_at_point, total_current_ticker_unrealized, new_q
+        ticker, is_closing_trade, realized_pnl_at_point, total_current_ticker_unrealized, new_q, old_q
     )
     win_rate = calculate_win_rate(ticker)
     win_loss_ratio = calculate_win_loss_ratio(ticker)
