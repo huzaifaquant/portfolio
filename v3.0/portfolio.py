@@ -1534,7 +1534,7 @@ def calculate_win_loss_ratio(ticker):
     l = counts['loss'] + (1 if open_outcomes.get(ticker) == 'Loss' else 0)
     return f"{w}:{l}"
 
-def calculate_trades_per_month(current_date, current_trade_string, is_opening_trade=False, trade_number=None):
+def calculate_trades_per_month(current_date, is_opening_trade=False, trade_number=None):
     """
     Calculate number of trades in the current month (calendar-based, same for hold and trades-only).
 
@@ -2976,7 +2976,7 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     
     # Calculate Trades/Month (calendar-based: opened this month + carried from previous)
     is_opening_trade = (old_q == 0 and new_q != 0)
-    trades_per_month = calculate_trades_per_month(date, trade_string, is_opening_trade=is_opening_trade, trade_number=trade_number)
+    trades_per_month = calculate_trades_per_month(date, is_opening_trade=is_opening_trade, trade_number=trade_number)
     
     # Calculate Most/Least Traded (by number of completed trades per symbol)
     abs_quantity_counts, most_traded_symbol, least_traded_symbol = calculate_most_least_traded(
