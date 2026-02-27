@@ -2787,10 +2787,20 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     # Determine if this trade opens a new position (fresh open or flip into opposite side)
     is_opening_trade = (old_q == 0 and new_q != 0)
 
-    # Track position opening for average holding period calculation.
-    # On a flip the old position closes and a brand-new position starts on the same bar,
-    # so we must clear the stale open date/period before recording the new entry.
+    # A flip = close old position + open new one on the same bar.
+    # Treat the close side exactly like a regular close for AHP, then re-open.
     if _is_flip:
+        open_dt   = portfolio_state.get('position_open_date', {}).get(ticker)
+        exit_dt   = _parse_date_value(date)
+        open_period = portfolio_state.get('position_open_period', {}).get(ticker)
+        if open_dt is not None and exit_dt is not None:
+            holding_period = (exit_dt - open_dt).days
+        elif open_period is not None:
+            holding_period = current_period - open_period + 1
+        else:
+            holding_period = None
+        if holding_period is not None:
+            update_average_holding_days([{'ticker': ticker, 'holding_period': holding_period, 'closed_qty': abs(old_q)}])
         portfolio_state['position_open_period'].pop(ticker, None)
         portfolio_state['position_open_date'].pop(ticker, None)
         track_position_opening(ticker, current_period, date)
@@ -2981,10 +2991,11 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     win_rate = calculate_win_rate(ticker)
     win_loss_ratio = calculate_win_loss_ratio(ticker)
     
-    # Calculate Trades/Month (calendar-based: opened this month + carried from previous)
-    # Flips count as opening a new trade for the purposes of trades-per-month
+    # Calculate Trades/Month — flip counts as opening a new trade.
+    # On a flip trade_number is the old (closing) number; the new one is in trade_tracker.
     is_opening_trade = (old_q == 0 and new_q != 0) or _is_flip
-    trades_per_month = calculate_trades_per_month(date, is_opening_trade=is_opening_trade, trade_number=trade_number)
+    new_trade_num = trade_tracker.get(ticker) if _is_flip else trade_number
+    trades_per_month = calculate_trades_per_month(date, is_opening_trade=is_opening_trade, trade_number=new_trade_num)
     
     # Calculate Most/Least Traded (by number of completed trades per symbol)
     abs_quantity_counts, most_traded_symbol, least_traded_symbol = calculate_most_least_traded(
