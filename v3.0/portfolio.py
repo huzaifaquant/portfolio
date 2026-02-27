@@ -1475,7 +1475,7 @@ def calculate_trade_win_loss(trade_string, realized_pnl_at_point, unrealized_pnl
         return "Loss"
     return None  # total == 0: neither (e.g. trade just started or flat)
 
-def update_win_loss_counts_from_trade_pnl(ticker, is_closing_trade, realized_pnl_at_close, current_ticker_unrealized_pnl, new_quantity, old_quantity=0):
+def update_win_loss_counts_from_trade_pnl(ticker, is_closing_trade, realized_pnl_at_close, current_ticker_unrealized_pnl, new_quantity):
     """
     One slot per trade: update win/loss from trade PnL (realized at close, unrealized while open).
     - On full close (new_quantity == 0): remove open slot, count realized PnL as win or loss.
@@ -2781,11 +2781,20 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     # Row number (1-based) for AHP / period tracking; from state
     current_period = portfolio_state.get('current_period', 0) + 1
 
-    # Determine if this trade opens a new position (summary trade)
+    # Detect position flip (long→short or short→long) — needed early for AHP and trades/month
+    _is_flip = (old_q > 0 and new_q < 0) or (old_q < 0 and new_q > 0)
+
+    # Determine if this trade opens a new position (fresh open or flip into opposite side)
     is_opening_trade = (old_q == 0 and new_q != 0)
-    
-    # Track position opening if this is a new position (old_q == 0 and new_q != 0)
-    if is_opening_trade:
+
+    # Track position opening for average holding period calculation.
+    # On a flip the old position closes and a brand-new position starts on the same bar,
+    # so we must clear the stale open date/period before recording the new entry.
+    if _is_flip:
+        portfolio_state['position_open_period'].pop(ticker, None)
+        portfolio_state['position_open_date'].pop(ticker, None)
+        track_position_opening(ticker, current_period, date)
+    elif is_opening_trade:
         track_position_opening(ticker, current_period, date)
     
     # Backtester Net Performance % (independent state only)
@@ -2942,9 +2951,7 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     # Get trade number for this ticker
     trade_number = get_or_create_trade_number(ticker, old_q, new_q, side)
     
-    # Detect position flip (long→short or short→long) for trade string labelling
-    _is_flip = (old_q > 0 and new_q < 0) or (old_q < 0 and new_q > 0)
-    # Format trade string
+    # Format trade string (_is_flip already computed above alongside track_position_opening)
     trade_string = format_trade_string(side, current_direction, trade_number, new_q, is_flip=_is_flip)
 
     # Calculate Average Holding Days - only calculate when trade closes
@@ -2969,13 +2976,14 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     # Win/Loss: per-trade PnL (realized + unrealized for this ticker only), so hold vs trades-only match
     win_loss = calculate_trade_win_loss(trade_string, realized_pnl_at_point, total_current_ticker_unrealized, side)
     update_win_loss_counts_from_trade_pnl(
-        ticker, is_closing_trade, realized_pnl_at_point, total_current_ticker_unrealized, new_q, old_q
+        ticker, is_closing_trade, realized_pnl_at_point, total_current_ticker_unrealized, new_q
     )
     win_rate = calculate_win_rate(ticker)
     win_loss_ratio = calculate_win_loss_ratio(ticker)
     
     # Calculate Trades/Month (calendar-based: opened this month + carried from previous)
-    is_opening_trade = (old_q == 0 and new_q != 0)
+    # Flips count as opening a new trade for the purposes of trades-per-month
+    is_opening_trade = (old_q == 0 and new_q != 0) or _is_flip
     trades_per_month = calculate_trades_per_month(date, is_opening_trade=is_opening_trade, trade_number=trade_number)
     
     # Calculate Most/Least Traded (by number of completed trades per symbol)
