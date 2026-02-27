@@ -1372,7 +1372,7 @@ def calculate_liquidation_price(current_position, new_q, avg_p):
         # Hold position or invalid avg_p
         return None
 
-def calculate_take_profit(current_position, new_q, avg_p, take_profit_pct=0.20):
+def calculate_take_profit(current_position, new_q, avg_p, take_profit_pct=None):
     """
     Calculate Take Profit price based on current position.
     
@@ -1380,74 +1380,60 @@ def calculate_take_profit(current_position, new_q, avg_p, take_profit_pct=0.20):
         - Long position: take_profit = avg_price * (1 + take_profit_pct)
         - Short position: take_profit = avg_price * (1 - take_profit_pct)
     
-    Default take_profit_pct = 20% (0.20)
-    
     Args:
         current_position (str): Current position type ('long', 'short', 'hold')
         new_q (float): New quantity after trade
         avg_p (float): Average entry price
-        take_profit_pct (float): Take profit percentage (default 0.20 = 20%)
+        take_profit_pct (float or None): Take profit percentage, or None to disable
     
     Returns:
-        float or None: Take profit price, or None if no position or invalid avg_price
+        float or None: Take profit price, or None if no position, invalid avg_price, or pct not set
     
     Edge cases:
         - Returns None if quantity == 0 or avg_price <= 0
         - Returns None if position is 'hold'
     """
-    if new_q == 0 or avg_p <= 0:
+    if take_profit_pct is None or new_q == 0 or avg_p <= 0:
         return None
     
     pos = str(current_position).lower()
     
     if pos == 'long':
-        # Long: Take Profit = Avg Price * (1 + Percentage)
-        # Example: Entry at 100, 20% TP = 100 * 1.20 = 120
         return avg_p * (1 + take_profit_pct)
     elif pos == 'short':
-        # Short: Take Profit = Avg Price * (1 - Percentage)
-        # Example: Entry at 100, 20% TP = 100 * 0.80 = 80
         return avg_p * (1 - take_profit_pct)
     else:
         return None
 
-def calculate_stop_loss(current_position, new_q, avg_p, stop_loss_pct=0.10):
+def calculate_stop_loss(current_position, new_q, avg_p, stop_loss_pct=None):
     """
     Calculate Stop Loss price based on current position.
     
     Formulas:
         - Long position: stop_loss = avg_price * (1 - stop_loss_pct)
-            Unrealized loss = -cost_basis * percentage when hit
         - Short position: stop_loss = avg_price * (1 + stop_loss_pct)
-            Vice versa of Take Profit
-    
-    Default stop_loss_pct = 10% (0.10)
     
     Args:
         current_position (str): Current position type ('long', 'short', 'hold')
         new_q (float): New quantity after trade
         avg_p (float): Average entry price
-        stop_loss_pct (float): Stop loss percentage (default 0.10 = 10%)
+        stop_loss_pct (float or None): Stop loss percentage, or None to disable
     
     Returns:
-        float or None: Stop loss price, or None if no position or invalid avg_price
+        float or None: Stop loss price, or None if no position, invalid avg_price, or pct not set
     
     Edge cases:
         - Returns None if quantity == 0 or avg_price <= 0
         - Returns None if position is 'hold'
     """
-    if new_q == 0 or avg_p <= 0:
+    if stop_loss_pct is None or new_q == 0 or avg_p <= 0:
         return None
     
     pos = str(current_position).lower()
     
     if pos == 'long':
-        # Long: Stop Loss = Avg Price * (1 - Percentage)
-        # Example: Entry at 100, 10% SL = 100 * 0.90 = 90
         return avg_p * (1 - stop_loss_pct)
     elif pos == 'short':
-        # Short: Stop Loss = Avg Price * (1 + Percentage) [vice versa of TP]
-        # Example: Entry at 100, 10% SL = 100 * 1.10 = 110
         return avg_p * (1 + stop_loss_pct)
     else:
         return None
@@ -2737,7 +2723,7 @@ def calculate_equity_distribution_sector(ticker_pv_dict):
 
 # ---------- Main entry: one trade (or hold) → one row, state updated ----------
 
-def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take_profit_pct=0.20, stop_loss_pct=0.10, market_cap=None, industry=None, sector=None):
+def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take_profit_pct=None, stop_loss_pct=None, market_cap=None, industry=None, sector=None):
     """
     Process one trade (or hold) and append one row. All metrics come from state.
     
@@ -3220,7 +3206,7 @@ def process_trade(ticker, asset_type, side, price, quantity_buy, date=None, take
     return row
 
     
-def add_trade(ticker, asset_type=None, side='buy', price=0.0, quantity_buy=0.0, date=None, take_profit_pct=0.20, stop_loss_pct=0.10, market_cap=None, industry=None, sector=None):
+def add_trade(ticker, asset_type=None, side='buy', price=0.0, quantity_buy=0.0, date=None, take_profit_pct=None, stop_loss_pct=None, market_cap=None, industry=None, sector=None):
     """
     Add one trade (or hold) to the portfolio. Updates state and appends one row.
     
